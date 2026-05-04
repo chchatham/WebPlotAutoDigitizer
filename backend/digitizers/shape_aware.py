@@ -202,6 +202,43 @@ def estimate_marker_profile(
     )
 
 
+def _local_maxima_nms(
+    dist: np.ndarray,
+    min_distance: float,
+    min_val: float = 1.0,
+) -> list[tuple[int, int, float]]:
+    """Find local maxima in distance transform with non-maximum suppression."""
+    # Dilate to find local max regions
+    kernel_size = max(3, int(min_distance))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    dilated = cv2.dilate(dist, np.ones((kernel_size, kernel_size)))
+    local_max = (dist == dilated) & (dist >= min_val)
+
+    ys, xs = np.where(local_max)
+    if len(xs) == 0:
+        return []
+
+    # Sort by distance value (highest first)
+    vals = dist[ys, xs]
+    order = np.argsort(-vals)
+    xs, ys, vals = xs[order], ys[order], vals[order]
+
+    # Non-maximum suppression
+    kept: list[tuple[int, int, float]] = []
+    suppressed = np.zeros(len(xs), dtype=bool)
+
+    for i in range(len(xs)):
+        if suppressed[i]:
+            continue
+        kept.append((int(xs[i]), int(ys[i]), float(vals[i])))
+        # Suppress neighbors within min_distance
+        dists_sq = (xs[i+1:].astype(float) - xs[i])**2 + (ys[i+1:].astype(float) - ys[i])**2
+        suppressed[i+1:] |= dists_sq < (min_distance * 0.8)**2
+
+    return kept
+
+
 def decompose_filled_clump(
     thresh: np.ndarray,
     contour: np.ndarray,
@@ -212,7 +249,8 @@ def decompose_filled_clump(
 ) -> list[tuple[float, float, float]]:
     """Decompose a merged filled-marker clump into individual point centers.
 
-    Uses iterative erosion guided by the marker profile to find centers.
+    Uses distance transform with local maxima detection and NMS,
+    guided by the marker profile radius.
     Returns list of (px_x, px_y, confidence).
     """
     x, y, w, h = cv2.boundingRect(contour)
@@ -236,36 +274,24 @@ def decompose_filled_clump(
         estimated_n = round(estimated_n * 0.7 + expected_n * 0.3)
         estimated_n = max(2, estimated_n)
 
-    # Distance transform approach
     dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
 
-    # Try multiple erosion levels to find the right number of peaks
+    # Strategy 1: Local maxima with NMS at marker-radius spacing
+    min_sep = profile.mean_radius_px * 0.8
     best_centroids = []
     best_diff = float("inf")
 
-    for threshold_frac in [0.5, 0.4, 0.3, 0.6, 0.2, 0.7]:
-        thresh_val = dist.max() * threshold_frac
-        if thresh_val < 1:
-            continue
-        _, peaks = cv2.threshold(dist, thresh_val, 255, 0)
-        peaks = peaks.astype(np.uint8)
-
-        labels_arr, n_labels = ndimage.label(peaks)
-        if n_labels < 2:
+    for min_val_frac in [0.3, 0.2, 0.4, 0.15, 0.5]:
+        min_val = dist.max() * min_val_frac
+        peaks = _local_maxima_nms(dist, min_sep, min_val)
+        if len(peaks) < 2:
             continue
 
         centroids = []
-        for i in range(1, n_labels + 1):
-            ys, xs = np.where(labels_arr == i)
-            if len(xs) == 0:
-                continue
-            cx = float(np.mean(xs)) + x0 + x_offset
-            cy = float(np.mean(ys)) + y0 + y_offset
-            # Confidence based on distance value at centroid
-            local_cx = int(np.mean(xs))
-            local_cy = int(np.mean(ys))
-            dist_val = dist[local_cy, local_cx] if 0 <= local_cy < dist.shape[0] and 0 <= local_cx < dist.shape[1] else 0
-            conf = min(0.85, 0.4 + 0.4 * (dist_val / (profile.mean_radius_px + 1e-6)))
+        for lx, ly, dval in peaks:
+            cx = float(lx) + x0 + x_offset
+            cy = float(ly) + y0 + y_offset
+            conf = min(0.85, 0.4 + 0.4 * (dval / (profile.mean_radius_px + 1e-6)))
             centroids.append((cx, cy, conf))
 
         diff = abs(len(centroids) - estimated_n)
@@ -276,8 +302,66 @@ def decompose_filled_clump(
         if len(centroids) == estimated_n:
             break
 
+    # Strategy 2: If NMS found too few, try label-based approach with lower thresholds
+    if len(best_centroids) < estimated_n:
+        for threshold_frac in [0.25, 0.2, 0.15, 0.1]:
+            thresh_val = dist.max() * threshold_frac
+            if thresh_val < 0.5:
+                continue
+            _, peaks_img = cv2.threshold(dist, thresh_val, 255, 0)
+            peaks_img = peaks_img.astype(np.uint8)
+
+            labels_arr, n_labels = ndimage.label(peaks_img)
+            if n_labels <= len(best_centroids):
+                continue
+
+            centroids = []
+            for i in range(1, n_labels + 1):
+                ys, xs = np.where(labels_arr == i)
+                if len(xs) == 0:
+                    continue
+                cx = float(np.mean(xs)) + x0 + x_offset
+                cy = float(np.mean(ys)) + y0 + y_offset
+                local_cx, local_cy = int(np.mean(xs)), int(np.mean(ys))
+                dval = dist[local_cy, local_cx] if 0 <= local_cy < dist.shape[0] and 0 <= local_cx < dist.shape[1] else 0
+                conf = min(0.75, 0.3 + 0.3 * (dval / (profile.mean_radius_px + 1e-6)))
+                centroids.append((cx, cy, conf))
+
+            if len(centroids) > len(best_centroids):
+                diff = abs(len(centroids) - estimated_n)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_centroids = centroids
+
+            if len(centroids) >= estimated_n:
+                break
+
+    # Strategy 3: If still too few, use skeleton-based center spacing
+    if len(best_centroids) < estimated_n and estimated_n >= 3:
+        # Place points along the skeleton of the clump at regular intervals
+        skeleton = cv2.ximgproc.thinning(mask) if hasattr(cv2, 'ximgproc') else None
+        if skeleton is None:
+            # Manual skeleton via repeated erosion
+            eroded = mask.copy()
+            for _ in range(max(1, int(profile.mean_radius_px * 0.5))):
+                eroded = cv2.erode(eroded, np.ones((3, 3), np.uint8))
+                if cv2.countNonZero(eroded) < 2:
+                    break
+            skeleton = eroded
+
+        skel_ys, skel_xs = np.where(skeleton > 0)
+        if len(skel_xs) >= estimated_n:
+            # Sample evenly along skeleton pixels
+            indices = np.linspace(0, len(skel_xs) - 1, estimated_n, dtype=int)
+            centroids = []
+            for idx in indices:
+                cx = float(skel_xs[idx]) + x0 + x_offset
+                cy = float(skel_ys[idx]) + y0 + y_offset
+                centroids.append((cx, cy, 0.5))
+            if len(centroids) > len(best_centroids):
+                best_centroids = centroids
+
     if not best_centroids:
-        # Fallback: use contour centroid as a single point
         M = cv2.moments(contour)
         if M["m00"] > 0:
             cx = M["m10"] / M["m00"] + x_offset
