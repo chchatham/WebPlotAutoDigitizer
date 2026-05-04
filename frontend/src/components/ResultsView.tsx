@@ -47,13 +47,14 @@ export default function ResultsView({ upload, calibration, onBack, onReset }: Pr
     for (const pt of result.points) {
       const x = pt.x_pixel * scale;
       const y = pt.y_pixel * scale;
+      const alpha = 0.15 + pt.confidence * 0.3;
 
       ctx.beginPath();
-      ctx.arc(x, y, 4, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(220, 38, 38, ${0.3 + pt.confidence * 0.7})`;
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(220, 38, 38, ${alpha * 0.5})`;
       ctx.fill();
-      ctx.strokeStyle = "#dc2626";
-      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = `rgba(220, 38, 38, ${alpha + 0.2})`;
+      ctx.lineWidth = 2;
       ctx.stroke();
     }
   }, [image, result, scale]);

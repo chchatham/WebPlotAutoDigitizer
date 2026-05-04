@@ -62,3 +62,31 @@ Format: 🚧 SIGN: description
 🚧 SIGN: The hybrid's agreement-based selection (blob vs template) uses confidence comparison, NOT a fixed threshold. When both methods find points at similar locations, the one with higher average confidence wins. This is critical for triangle markers where blob finds wrong centroids with lower confidence.
 
 🚧 SIGN: Template matching is slow on grid plots (~4 seconds). If performance becomes an issue, optimize template matching before removing it — the hybrid only falls back to template when blob's confidence is low.
+
+## Deployment Guardrails (added Phase 9 — Railway deployment)
+
+🚧 SIGN: Debian Trixie (used by `python:3.11-slim`) removed `libgl1-mesa-glx`. Use `libgl1` instead. If upgrading the Python base image, check that OpenGL/OpenCV system deps still exist under the same package names.
+
+🚧 SIGN: Railway assigns a dynamic PORT via environment variable. The Dockerfile CMD must use shell form (`CMD uvicorn ... --port ${PORT:-8000}`) not exec form (`CMD ["uvicorn", ...]`) so the variable expands at runtime.
+
+🚧 SIGN: Frontend `VITE_API_URL` must default to `""` (empty string), NOT `http://localhost:8000`. In production the frontend and backend are served from the same origin, so relative paths work. Hardcoding localhost breaks production.
+
+🚧 SIGN: Never use `crossOrigin="anonymous"` on `new Image()` when loading same-origin images. It forces a CORS preflight and if the server doesn't return `Access-Control-Allow-Origin`, the image load fails silently (triggers `onerror` not `onload`). Only use crossOrigin when actually loading cross-origin resources.
+
+🚧 SIGN: CORS `allow_origins` must include the production domain, not just localhost. Using `["*"]` is acceptable when the frontend is same-origin and there are no cookie-based auth concerns. If credentials are added later, switch to an explicit origin list.
+
+🚧 SIGN: In React canvas components, store loaded images in `useState`, NOT `useRef`. A ref update doesn't trigger re-renders, so the draw effect won't fire when the image loads asynchronously. State ensures the effect dependency array picks up the change.
+
+🚧 SIGN: Railway `/tmp` is ephemeral — uploaded images are lost on redeploy or container restart. This is fine for the current stateless design but would need a persistent volume or object storage (S3/R2) if image persistence is required.
+
+## UI & Detection Guardrails (added Phase 10)
+
+🚧 SIGN: X-axis and Y-axis handles must be independent — each axis has its own line with 2 handles. Never share a corner point between axes. X handles are blue (#2563eb), Y handles are green (#16a34a).
+
+🚧 SIGN: Detected point overlay must be translucent (max opacity ~0.5) so original plot markers are visible underneath. Users need to see which points were missed.
+
+🚧 SIGN: Digitizer ROI must extend 10% beyond the calibration pixel range on each side. Points at or near axis boundaries are common in real plots and must not be clipped.
+
+🚧 SIGN: The blob detector uses distance-transform watershed to split merged contours that are >1.8x the median single-blob area. This handles clumped/overlapping markers. Do not remove this without verifying clump test cases still pass.
+
+🚧 SIGN: Some test cases use `seed=None` (randomized each run). These are intentional — they exercise the detector on fresh data. Do not add seeds to stabilize them; the assertion thresholds are set conservatively to allow variance.

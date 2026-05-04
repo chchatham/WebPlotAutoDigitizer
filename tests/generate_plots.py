@@ -49,11 +49,53 @@ class PlotOutput:
     y: list[float] = field(default_factory=list)
 
 
-def generate_plot(config: PlotConfig, output_dir: Path) -> PlotOutput:
+@dataclass
+class ClumpSpec:
+    n_clumps: int = 3
+    points_per_clump: int = 5
+    clump_radius_pct: float = 2.0  # % of axis range
+
+
+def _generate_clumped_points(
+    config: PlotConfig, clump: ClumpSpec, rng: np.random.Generator
+) -> tuple[np.ndarray, np.ndarray]:
+    x_span = config.x_range[1] - config.x_range[0]
+    y_span = config.y_range[1] - config.y_range[0]
+    radius_x = x_span * clump.clump_radius_pct / 100.0
+    radius_y = y_span * clump.clump_radius_pct / 100.0
+
+    margin = 0.1
+    cx = rng.uniform(
+        config.x_range[0] + x_span * margin,
+        config.x_range[1] - x_span * margin,
+        clump.n_clumps,
+    )
+    cy = rng.uniform(
+        config.y_range[0] + y_span * margin,
+        config.y_range[1] - y_span * margin,
+        clump.n_clumps,
+    )
+
+    all_x, all_y = [], []
+    for i in range(clump.n_clumps):
+        px = rng.normal(cx[i], radius_x, clump.points_per_clump)
+        py = rng.normal(cy[i], radius_y, clump.points_per_clump)
+        px = np.clip(px, config.x_range[0], config.x_range[1])
+        py = np.clip(py, config.y_range[0], config.y_range[1])
+        all_x.append(px)
+        all_y.append(py)
+
+    return np.concatenate(all_x), np.concatenate(all_y)
+
+
+def generate_plot(config: PlotConfig, output_dir: Path, clump: ClumpSpec | None = None) -> PlotOutput:
     rng = np.random.default_rng(config.seed)
 
-    x = rng.uniform(config.x_range[0], config.x_range[1], config.n_points)
-    y = rng.uniform(config.y_range[0], config.y_range[1], config.n_points)
+    if clump is not None:
+        x, y = _generate_clumped_points(config, clump, rng)
+    else:
+        x = rng.uniform(config.x_range[0], config.x_range[1], config.n_points)
+        y = rng.uniform(config.y_range[0], config.y_range[1], config.n_points)
 
     fig, ax = plt.subplots(figsize=FIXED_FIGSIZE, dpi=FIXED_DPI)
     fig.set_facecolor(config.bg_color)
@@ -186,15 +228,70 @@ BASELINE_CONFIGS: list[PlotConfig] = [
     PlotConfig(n_points=20, marker="o", marker_size="medium", opacity=0.4, grid=True, bg_color="lightgray", seed=55, label="55_everything"),
 ]
 
+CLUMP_CONFIGS: list[tuple[PlotConfig, ClumpSpec]] = [
+    # Tight clumps of circles
+    (PlotConfig(n_points=15, marker="o", marker_size="medium", seed=60, label="56_clump_circles"),
+     ClumpSpec(n_clumps=3, points_per_clump=5, clump_radius_pct=1.5)),
+    # Dense clumps with small markers
+    (PlotConfig(n_points=25, marker="o", marker_size="small", seed=61, label="57_clump_small"),
+     ClumpSpec(n_clumps=5, points_per_clump=5, clump_radius_pct=1.0)),
+    # Very tight clumps (sub-marker-size spacing)
+    (PlotConfig(n_points=12, marker="o", marker_size="large", seed=62, label="58_clump_tight"),
+     ClumpSpec(n_clumps=3, points_per_clump=4, clump_radius_pct=0.5)),
+    # Clumps with squares
+    (PlotConfig(n_points=15, marker="s", marker_size="medium", seed=63, label="59_clump_squares"),
+     ClumpSpec(n_clumps=3, points_per_clump=5, clump_radius_pct=1.5)),
+    # Clumps on gray bg with grid
+    (PlotConfig(n_points=20, marker="o", marker_size="medium", bg_color="lightgray", grid=True, seed=64, label="60_clump_grid"),
+     ClumpSpec(n_clumps=4, points_per_clump=5, clump_radius_pct=2.0)),
+]
+
+RANDOM_CLUMP_CONFIGS: list[tuple[PlotConfig, ClumpSpec]] = [
+    # No seed — randomized each run
+    (PlotConfig(n_points=15, marker="o", marker_size="medium", seed=None, label="rand_clump_circle"),
+     ClumpSpec(n_clumps=3, points_per_clump=5, clump_radius_pct=1.5)),
+    (PlotConfig(n_points=20, marker="o", marker_size="small", seed=None, label="rand_clump_small"),
+     ClumpSpec(n_clumps=4, points_per_clump=5, clump_radius_pct=1.0)),
+    (PlotConfig(n_points=20, marker="s", marker_size="medium", seed=None, label="rand_clump_squares"),
+     ClumpSpec(n_clumps=4, points_per_clump=5, clump_radius_pct=1.5)),
+    (PlotConfig(n_points=30, marker="o", marker_size="medium", seed=None, label="rand_scatter_medium"),
+     ClumpSpec(n_clumps=6, points_per_clump=5, clump_radius_pct=2.0)),
+]
+
+RANDOM_SCATTER_CONFIGS: list[PlotConfig] = [
+    PlotConfig(n_points=20, marker="o", marker_size="medium", seed=None, label="rand_20_circle"),
+    PlotConfig(n_points=30, marker="o", marker_size="small", seed=None, label="rand_30_small"),
+    PlotConfig(n_points=15, marker="s", marker_size="medium", seed=None, label="rand_15_square"),
+    PlotConfig(n_points=20, marker="D", marker_size="medium", seed=None, label="rand_20_diamond"),
+]
+
 
 def generate_baseline_suite(output_dir: Path) -> list[PlotOutput]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    return [generate_plot(cfg, output_dir) for cfg in BASELINE_CONFIGS]
+    results = [generate_plot(cfg, output_dir) for cfg in BASELINE_CONFIGS]
+    for cfg, clump in CLUMP_CONFIGS:
+        results.append(generate_plot(cfg, output_dir, clump=clump))
+    return results
+
+
+def generate_randomized_suite(output_dir: Path) -> list[PlotOutput]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results = []
+    for cfg in RANDOM_SCATTER_CONFIGS:
+        results.append(generate_plot(cfg, output_dir))
+    for cfg, clump in RANDOM_CLUMP_CONFIGS:
+        results.append(generate_plot(cfg, output_dir, clump=clump))
+    return results
 
 
 if __name__ == "__main__":
     out = Path(__file__).parent / "fixtures"
     results = generate_baseline_suite(out)
-    print(f"Generated {len(results)} plots in {out}")
-    for r in results:
+    print(f"Generated {len(results)} baseline plots in {out}")
+
+    rand_out = Path(__file__).parent / "fixtures_random"
+    rand_results = generate_randomized_suite(rand_out)
+    print(f"Generated {len(rand_results)} randomized plots in {rand_out}")
+
+    for r in results + rand_results:
         print(f"  {r.image_path.name}: {r.config.n_points} points")

@@ -89,5 +89,30 @@ All checkboxes checked. All tests pass. App deployable to a hosted service.
 
 ---
 
+## Phase 9 — GitHub & Cloud Deployment
+- [x] Initialize git repo, create `.gitignore`
+- [x] Create GitHub repo (https://github.com/chchatham/WebPlotAutoDigitizer)
+- [x] Push all code to GitHub
+- [x] Install Railway CLI, authenticate
+- [x] Create Railway project, deploy via `railway up`
+- [x] Fix Dockerfile for Debian Trixie (`libgl1` replaces `libgl1-mesa-glx`)
+- [x] Fix Railway PORT env var (shell form CMD)
+- [x] Fix frontend API base URL for production (empty string = same-origin)
+- [x] Generate public Railway domain
+- [x] Fix canvas rendering (image ref → state)
+- [x] Fix CORS origins (allow all) and remove `crossOrigin="anonymous"`
+- [x] Health check passes on live URL
+- [ ] User confirms calibration screen works end-to-end in production
+- [x] Write project report (`report.html`)
+
+## Phase 10 — Refinements (User-Requested)
+- [x] About page: serve report.html as an About tab accessible from anywhere in the app
+- [x] Translucent overlay: detected points drawn with low opacity so original markers show through
+- [x] Independent axis handles: X-axis (blue) and Y-axis (green) each have their own line with 2 handles, no shared corner
+- [x] Fix points-outside-handles: digitizers expand ROI by 10% padding so edge points are found
+- [x] Clump test cases: 5 seeded clump configs + 4 randomized-per-run clump/scatter tests + watershed blob splitting
+- [x] All 43 tests pass
+- [ ] Deploy revised version to Railway for user testing
+
 ## Current Focus
-Complete. All phases done.
+Phase 10 refinements implemented. Deploying to Railway.

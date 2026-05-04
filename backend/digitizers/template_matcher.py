@@ -73,11 +73,12 @@ class TemplateMatcher(BaseDigitizer):
         y_min_px = int(min(calibration.y_pixel_range))
         y_max_px = int(max(calibration.y_pixel_range))
 
-        margin = 3
-        x_min_px = max(0, x_min_px + margin)
-        x_max_px = min(gray.shape[1] - 1, x_max_px - margin)
-        y_min_px = max(0, y_min_px + margin)
-        y_max_px = min(gray.shape[0] - 1, y_max_px - margin)
+        x_pad = int((x_max_px - x_min_px) * 0.10)
+        y_pad = int((y_max_px - y_min_px) * 0.10)
+        x_min_px = max(0, x_min_px - x_pad)
+        x_max_px = min(gray.shape[1] - 1, x_max_px + x_pad)
+        y_min_px = max(0, y_min_px - y_pad)
+        y_max_px = min(gray.shape[0] - 1, y_max_px + y_pad)
 
         roi = gray[y_min_px:y_max_px, x_min_px:x_max_px]
         roi_h, roi_w = roi.shape

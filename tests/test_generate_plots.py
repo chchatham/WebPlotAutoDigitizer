@@ -45,7 +45,7 @@ def test_generate_respects_axis_range(tmp_path: Path):
 
 def test_baseline_suite_generates_20_plots(tmp_path: Path):
     results = generate_baseline_suite(tmp_path)
-    assert len(results) == 55
+    assert len(results) == 60
     for r in results:
         assert r.image_path.exists()
         assert r.json_path.exists()

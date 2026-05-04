@@ -7,16 +7,25 @@ interface Props {
   onBack: () => void;
 }
 
-type Handle = "xMin" | "xMax" | "yMin" | "yMax";
+interface HandlePos {
+  x: number;
+  y: number;
+}
+
+type HandleId = "xLeft" | "xRight" | "yBottom" | "yTop";
 
 export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Props) {
-  const [calibration, setCalibration] = useState<Calibration | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [dragging, setDragging] = useState<Handle | null>(null);
+  const [dragging, setDragging] = useState<HandleId | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [scale, setScale] = useState(1);
+
+  const [xLeft, setXLeft] = useState<HandlePos>({ x: 0, y: 0 });
+  const [xRight, setXRight] = useState<HandlePos>({ x: 0, y: 0 });
+  const [yBottom, setYBottom] = useState<HandlePos>({ x: 0, y: 0 });
+  const [yTop, setYTop] = useState<HandlePos>({ x: 0, y: 0 });
 
   const [xMinVal, setXMinVal] = useState("0");
   const [xMaxVal, setXMaxVal] = useState("10");
@@ -27,11 +36,20 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
     setLoading(true);
     detectAxes(upload.image_id)
       .then((res) => {
-        setCalibration(res.axes);
-        setXMinVal(String(res.axes.x_data_range[0]));
-        setXMaxVal(String(res.axes.x_data_range[1]));
-        setYMinVal(String(res.axes.y_data_range[0]));
-        setYMaxVal(String(res.axes.y_data_range[1]));
+        const ax = res.axes;
+        const [xMinPx, xMaxPx] = ax.x_pixel_range;
+        const [yMinPx, yMaxPx] = ax.y_pixel_range;
+        // X-axis: horizontal line at bottom (yMinPx is the larger y = bottom)
+        setXLeft({ x: xMinPx, y: yMinPx });
+        setXRight({ x: xMaxPx, y: yMinPx });
+        // Y-axis: vertical line at left (xMinPx)
+        setYBottom({ x: xMinPx, y: yMinPx });
+        setYTop({ x: xMinPx, y: yMaxPx });
+
+        setXMinVal(String(ax.x_data_range[0]));
+        setXMaxVal(String(ax.x_data_range[1]));
+        setYMinVal(String(ax.y_data_range[0]));
+        setYMaxVal(String(ax.y_data_range[1]));
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -41,8 +59,7 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
     const img = new Image();
     img.onload = () => {
       setImage(img);
-      const maxWidth = 760;
-      setScale(Math.min(1, maxWidth / img.width));
+      setScale(Math.min(1, 760 / img.width));
     };
     img.onerror = () => {
       const fallbackCanvas = document.createElement("canvas");
@@ -67,7 +84,7 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !image || !calibration) return;
+    if (!canvas || !image) return;
 
     const ctx = canvas.getContext("2d")!;
     canvas.width = image.width * scale;
@@ -75,105 +92,107 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
 
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-    const [xMinPx, xMaxPx] = calibration.x_pixel_range;
-    const [yMinPx, yMaxPx] = calibration.y_pixel_range;
-
-    ctx.strokeStyle = "#2563eb";
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 4]);
 
-    // X-axis line (bottom)
+    // X-axis line (blue)
+    ctx.strokeStyle = "#2563eb";
     ctx.beginPath();
-    ctx.moveTo(xMinPx * scale, yMinPx * scale);
-    ctx.lineTo(xMaxPx * scale, yMinPx * scale);
+    ctx.moveTo(xLeft.x * scale, xLeft.y * scale);
+    ctx.lineTo(xRight.x * scale, xRight.y * scale);
     ctx.stroke();
 
-    // Y-axis line (left)
+    // Y-axis line (green)
+    ctx.strokeStyle = "#16a34a";
     ctx.beginPath();
-    ctx.moveTo(xMinPx * scale, yMinPx * scale);
-    ctx.lineTo(xMinPx * scale, yMaxPx * scale);
+    ctx.moveTo(yBottom.x * scale, yBottom.y * scale);
+    ctx.lineTo(yTop.x * scale, yTop.y * scale);
     ctx.stroke();
 
     ctx.setLineDash([]);
 
-    const handles: { handle: Handle; x: number; y: number }[] = [
-      { handle: "xMin", x: xMinPx * scale, y: yMinPx * scale },
-      { handle: "xMax", x: xMaxPx * scale, y: yMinPx * scale },
-      { handle: "yMin", x: xMinPx * scale, y: yMinPx * scale },
-      { handle: "yMax", x: xMinPx * scale, y: yMaxPx * scale },
+    const handles: { id: HandleId; pos: HandlePos; color: string; label: string }[] = [
+      { id: "xLeft", pos: xLeft, color: "#2563eb", label: "X min" },
+      { id: "xRight", pos: xRight, color: "#2563eb", label: "X max" },
+      { id: "yBottom", pos: yBottom, color: "#16a34a", label: "Y min" },
+      { id: "yTop", pos: yTop, color: "#16a34a", label: "Y max" },
     ];
 
     for (const h of handles) {
-      ctx.fillStyle = dragging === h.handle ? "#dc2626" : "#2563eb";
+      const sx = h.pos.x * scale;
+      const sy = h.pos.y * scale;
+      ctx.fillStyle = dragging === h.id ? "#dc2626" : h.color;
       ctx.beginPath();
-      ctx.arc(h.x, h.y, 6, 0, Math.PI * 2);
+      ctx.arc(sx, sy, 7, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = "white";
       ctx.lineWidth = 2;
       ctx.stroke();
+
+      ctx.fillStyle = "white";
+      ctx.font = "bold 9px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(h.label, sx, sy);
     }
-  }, [image, calibration, scale, dragging]);
+  }, [image, xLeft, xRight, yBottom, yTop, scale, dragging]);
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (!calibration) return;
       const rect = canvasRef.current!.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
 
-      const [xMinPx, xMaxPx] = calibration.x_pixel_range;
-      const [yMinPx, yMaxPx] = calibration.y_pixel_range;
-
-      const handles: { handle: Handle; x: number; y: number }[] = [
-        { handle: "xMin", x: xMinPx * scale, y: yMinPx * scale },
-        { handle: "xMax", x: xMaxPx * scale, y: yMinPx * scale },
-        { handle: "yMax", x: xMinPx * scale, y: yMaxPx * scale },
+      const handles: { id: HandleId; pos: HandlePos }[] = [
+        { id: "xLeft", pos: xLeft },
+        { id: "xRight", pos: xRight },
+        { id: "yBottom", pos: yBottom },
+        { id: "yTop", pos: yTop },
       ];
 
       for (const h of handles) {
-        if (Math.hypot(mx - h.x, my - h.y) < 12) {
-          setDragging(h.handle);
+        if (Math.hypot(mx - h.pos.x * scale, my - h.pos.y * scale) < 14) {
+          setDragging(h.id);
           return;
         }
       }
     },
-    [calibration, scale]
+    [xLeft, xRight, yBottom, yTop, scale]
   );
 
   const onMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
-      if (!dragging || !calibration) return;
+      if (!dragging) return;
       const rect = canvasRef.current!.getBoundingClientRect();
       const mx = (e.clientX - rect.left) / scale;
       const my = (e.clientY - rect.top) / scale;
 
-      setCalibration((prev) => {
-        if (!prev) return prev;
-        const next = { ...prev };
-        if (dragging === "xMin") {
-          next.x_pixel_range = [mx, prev.x_pixel_range[1]];
-          next.y_pixel_range = [my, prev.y_pixel_range[1]];
-        } else if (dragging === "xMax") {
-          next.x_pixel_range = [prev.x_pixel_range[0], mx];
-        } else if (dragging === "yMax") {
-          next.y_pixel_range = [prev.y_pixel_range[0], my];
-        }
-        return next;
-      });
+      if (dragging === "xLeft") {
+        setXLeft({ x: mx, y: my });
+      } else if (dragging === "xRight") {
+        setXRight({ x: mx, y: my });
+      } else if (dragging === "yBottom") {
+        setYBottom({ x: mx, y: my });
+      } else if (dragging === "yTop") {
+        setYTop({ x: mx, y: my });
+      }
     },
-    [dragging, calibration, scale]
+    [dragging, scale]
   );
 
   const onMouseUp = useCallback(() => setDragging(null), []);
 
   const handleConfirm = () => {
-    if (!calibration) return;
-    const final: Calibration = {
-      ...calibration,
+    const cal: Calibration = {
+      x_pixel_range: [xLeft.x, xRight.x],
+      y_pixel_range: [
+        Math.max(xLeft.y, yBottom.y),
+        Math.min(xRight.y, yTop.y),
+      ],
       x_data_range: [parseFloat(xMinVal) || 0, parseFloat(xMaxVal) || 10],
       y_data_range: [parseFloat(yMinVal) || 0, parseFloat(yMaxVal) || 10],
     };
-    onCalibrated(final);
+    onCalibrated(cal);
   };
 
   if (loading) return <p>Detecting axes...</p>;
@@ -182,7 +201,11 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
   return (
     <div>
       <h2>Adjust Axis Calibration</h2>
-      <p>Drag the blue handles to align with the axis endpoints. Enter the data values below.</p>
+      <p style={{ fontSize: 14, color: "#6b7280" }}>
+        Drag handles to align with axis endpoints.
+        <span style={{ color: "#2563eb", fontWeight: 600 }}> Blue</span> = X-axis,
+        <span style={{ color: "#16a34a", fontWeight: 600 }}> Green</span> = Y-axis.
+      </p>
 
       <canvas
         ref={canvasRef}
@@ -194,19 +217,19 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16, maxWidth: 400 }}>
-        <label>
+        <label style={{ color: "#2563eb" }}>
           X min:
           <input type="number" step="any" value={xMinVal} onChange={(e) => setXMinVal(e.target.value)} />
         </label>
-        <label>
+        <label style={{ color: "#2563eb" }}>
           X max:
           <input type="number" step="any" value={xMaxVal} onChange={(e) => setXMaxVal(e.target.value)} />
         </label>
-        <label>
+        <label style={{ color: "#16a34a" }}>
           Y min:
           <input type="number" step="any" value={yMinVal} onChange={(e) => setYMinVal(e.target.value)} />
         </label>
-        <label>
+        <label style={{ color: "#16a34a" }}>
           Y max:
           <input type="number" step="any" value={yMaxVal} onChange={(e) => setYMaxVal(e.target.value)} />
         </label>
