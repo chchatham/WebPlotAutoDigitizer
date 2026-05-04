@@ -5,6 +5,7 @@ interface Props {
   upload: UploadResponse;
   onCalibrated: (calibration: Calibration) => void;
   onBack: () => void;
+  previousCalibration?: Calibration | null;
 }
 
 type HandleId =
@@ -17,7 +18,7 @@ const HIT_RADIUS = 14;
 const ZOOM_SIZE = 200;
 const ZOOM_FACTOR = 8;
 
-export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Props) {
+export default function AxisCalibrationView({ upload, onCalibrated, onBack, previousCalibration }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState<HandleId | null>(null);
@@ -44,11 +45,51 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
   const [yMinVal, setYMinVal] = useState("0");
   const [yMaxVal, setYMaxVal] = useState("10");
 
+  const [expectedPointCount, setExpectedPointCount] = useState("");
+
   const [activeHandle, setActiveHandle] = useState<HandleId | null>(null);
   const [activeHandlePos, setActiveHandlePos] = useState<{ x: number; y: number } | null>(null);
   const dragStartRef = useRef<{ mx: number; my: number; origVal: number } | null>(null);
 
   useEffect(() => {
+    if (previousCalibration) {
+      const [xMinPx, xMaxPx] = previousCalibration.x_pixel_range;
+      const [yMinPx, yMaxPx] = previousCalibration.y_pixel_range;
+
+      setXLeftX(xMinPx);
+      setXRightX(xMaxPx);
+      setXAxisY(yMinPx);
+
+      setYAxisX(xMinPx);
+      setYBottomY(yMinPx);
+      setYTopY(yMaxPx);
+
+      if (previousCalibration.detection_bounds) {
+        const db = previousCalibration.detection_bounds;
+        setBbLeft(db.x_min);
+        setBbRight(db.x_max);
+        setBbTop(db.y_min);
+        setBbBottom(db.y_max);
+      } else {
+        const xSpan = xMaxPx - xMinPx;
+        const ySpan = yMinPx - yMaxPx;
+        setBbLeft(Math.max(0, xMinPx - xSpan * 0.15));
+        setBbRight(Math.min(upload.width, xMaxPx + xSpan * 0.15));
+        setBbTop(Math.max(0, yMaxPx - ySpan * 0.15));
+        setBbBottom(Math.min(upload.height, yMinPx + ySpan * 0.15));
+      }
+
+      setXMinVal(String(previousCalibration.x_data_range[0]));
+      setXMaxVal(String(previousCalibration.x_data_range[1]));
+      setYMinVal(String(previousCalibration.y_data_range[0]));
+      setYMaxVal(String(previousCalibration.y_data_range[1]));
+      if (previousCalibration.expected_point_count) {
+        setExpectedPointCount(String(previousCalibration.expected_point_count));
+      }
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     detectAxes(upload.image_id)
       .then((res) => {
@@ -66,10 +107,12 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
 
         const xSpan = xMaxPx - xMinPx;
         const ySpan = yMinPx - yMaxPx;
+        const imgW = upload.width;
+        const imgH = upload.height;
         setBbLeft(Math.max(0, xMinPx - xSpan * 0.15));
-        setBbRight(xMaxPx + xSpan * 0.15);
+        setBbRight(Math.min(imgW, xMaxPx + xSpan * 0.15));
         setBbTop(Math.max(0, yMaxPx - ySpan * 0.15));
-        setBbBottom(yMinPx + ySpan * 0.15);
+        setBbBottom(Math.min(imgH, yMinPx + ySpan * 0.15));
 
         setXMinVal(String(ax.x_data_range[0]));
         setXMaxVal(String(ax.x_data_range[1]));
@@ -78,7 +121,7 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [upload.image_id]);
+  }, [upload.image_id, previousCalibration]);
 
   useEffect(() => {
     const img = new Image();
@@ -106,20 +149,6 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
     };
     img.src = getImageUrl(upload.image_id);
   }, [upload]);
-
-  const getHandlePixelPos = useCallback((id: HandleId): { x: number; y: number } => {
-    switch (id) {
-      case "xLeft": return { x: xLeftX, y: xAxisY };
-      case "xRight": return { x: xRightX, y: xAxisY };
-      case "yBottom": return { x: yAxisX, y: yBottomY };
-      case "yTop": return { x: yAxisX, y: yTopY };
-      case "bbTL": return { x: bbLeft, y: bbTop };
-      case "bbTR": return { x: bbRight, y: bbTop };
-      case "bbBL": return { x: bbLeft, y: bbBottom };
-      case "bbBR": return { x: bbRight, y: bbBottom };
-      default: return { x: 0, y: 0 };
-    }
-  }, [xLeftX, xRightX, xAxisY, yAxisX, yBottomY, yTopY, bbLeft, bbRight, bbTop, bbBottom]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -362,22 +391,29 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
       let posX = mx;
       let posY = my;
 
+      const imgW = image?.width ?? upload.width;
+      const imgH = image?.height ?? upload.height;
+
       switch (dragging) {
         case "xLeft":
           setXLeftX(mx);
-          posY = xAxisY;
+          setXAxisY(my);
+          posY = my;
           break;
         case "xRight":
           setXRightX(mx);
-          posY = xAxisY;
+          setXAxisY(my);
+          posY = my;
           break;
         case "yBottom":
           setYBottomY(my);
-          posX = yAxisX;
+          setYAxisX(mx);
+          posX = mx;
           break;
         case "yTop":
           setYTopY(my);
-          posX = yAxisX;
+          setYAxisX(mx);
+          posX = mx;
           break;
         case "xAxisLine":
           setXAxisY(my);
@@ -390,26 +426,26 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
           posY = (yTopY + yBottomY) / 2;
           break;
         case "bbTL":
-          setBbLeft(mx);
-          setBbTop(my);
+          setBbLeft(Math.max(0, mx));
+          setBbTop(Math.max(0, my));
           break;
         case "bbTR":
-          setBbRight(mx);
-          setBbTop(my);
+          setBbRight(Math.min(imgW, mx));
+          setBbTop(Math.max(0, my));
           break;
         case "bbBL":
-          setBbLeft(mx);
-          setBbBottom(my);
+          setBbLeft(Math.max(0, mx));
+          setBbBottom(Math.min(imgH, my));
           break;
         case "bbBR":
-          setBbRight(mx);
-          setBbBottom(my);
+          setBbRight(Math.min(imgW, mx));
+          setBbBottom(Math.min(imgH, my));
           break;
       }
 
       setActiveHandlePos({ x: posX, y: posY });
     },
-    [dragging, scale, xAxisY, yAxisX, xLeftX, xRightX, yTopY, yBottomY],
+    [dragging, scale, xAxisY, yAxisX, xLeftX, xRightX, yTopY, yBottomY, image, upload],
   );
 
   const onMouseUp = useCallback(() => {
@@ -418,9 +454,10 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
   }, []);
 
   const handleConfirm = () => {
+    const parsedCount = parseInt(expectedPointCount, 10);
     const cal: Calibration = {
       x_pixel_range: [xLeftX, xRightX],
-      y_pixel_range: [Math.max(yBottomY, xAxisY), yTopY],
+      y_pixel_range: [yBottomY, yTopY],
       x_data_range: [parseFloat(xMinVal) || 0, parseFloat(xMaxVal) || 10],
       y_data_range: [parseFloat(yMinVal) || 0, parseFloat(yMaxVal) || 10],
       detection_bounds: {
@@ -429,6 +466,7 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
         y_min: Math.min(bbTop, bbBottom),
         y_max: Math.max(bbTop, bbBottom),
       },
+      expected_point_count: !isNaN(parsedCount) && parsedCount > 0 ? parsedCount : null,
     };
     onCalibrated(cal);
   };
@@ -440,9 +478,8 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
     <div>
       <h2>Adjust Axis Calibration</h2>
       <p style={{ fontSize: 14, color: "#6b7280", marginBottom: 8 }}>
-        <span style={{ color: "#2563eb", fontWeight: 600 }}>Blue</span> handles = X-axis (drag left/right).{" "}
-        <span style={{ color: "#16a34a", fontWeight: 600 }}>Green</span> handles = Y-axis (drag up/down).{" "}
-        Drag the axis line itself to reposition it.
+        <span style={{ color: "#2563eb", fontWeight: 600 }}>Blue</span> handles = X-axis (drag to position; vertical movement shifts the whole axis).{" "}
+        <span style={{ color: "#16a34a", fontWeight: 600 }}>Green</span> handles = Y-axis (drag to position; horizontal movement shifts the whole axis).
       </p>
       <p style={{ fontSize: 14, color: "#6b7280", marginBottom: 12 }}>
         <span style={{ color: "#d97706", fontWeight: 600 }}>Orange box</span> = detection area. Expand it to cover all data points, including any beyond the axis min/max values.
@@ -487,6 +524,22 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
         <label style={{ color: "#16a34a" }}>
           Y max:
           <input type="number" step="any" value={yMaxVal} onChange={(e) => setYMaxVal(e.target.value)} />
+        </label>
+      </div>
+
+      <div style={{ marginTop: 12, maxWidth: 400 }}>
+        <label style={{ color: "#6b7280", fontSize: 14 }}>
+          Expected number of points (optional):
+          <input
+            type="number"
+            min="1"
+            max="1000"
+            step="1"
+            placeholder="Leave blank for auto-detect"
+            value={expectedPointCount}
+            onChange={(e) => setExpectedPointCount(e.target.value)}
+            style={{ marginLeft: 8, width: 180 }}
+          />
         </label>
       </div>
 

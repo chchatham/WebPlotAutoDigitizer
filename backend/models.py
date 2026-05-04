@@ -62,5 +62,17 @@ class DetectionBounds:
     y_max_px: float
 
 
+@dataclass
+class MarkerProfile:
+    mean_radius_px: float
+    std_radius_px: float
+    mean_area_px: float
+    is_hollow: bool
+    edge_width_px: float
+    circularity: float
+    fill_ratio: float
+    n_singletons: int
+
+
 class HealthResponse(BaseModel):
     status: str

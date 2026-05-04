@@ -88,6 +88,7 @@ class DigitizeRequest(BaseModel):
     image_id: str
     calibration: dict
     detection_bounds: dict | None = None
+    expected_point_count: int | None = None
 
 
 @app.post("/api/digitize")
@@ -114,7 +115,7 @@ async def digitize_endpoint(request: DigitizeRequest):
         )
 
     digitizer = HybridDigitizer()
-    result = digitizer.digitize(image, cal, bounds)
+    result = digitizer.digitize(image, cal, bounds, request.expected_point_count)
 
     return {
         "points": [

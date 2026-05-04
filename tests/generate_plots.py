@@ -21,9 +21,19 @@ FIXED_DPI = 150
 FIXED_FIGSIZE = (8, 6)
 
 MarkerShape = Literal["o", "s", "^", "x", "D"]
-MarkerSizeName = Literal["small", "medium", "large"]
+MarkerSizeName = Literal["small", "medium", "large", "xlarge"]
+FillStyle = Literal["filled", "unfilled"]
 
-MARKER_SIZES: dict[MarkerSizeName, int] = {"small": 20, "medium": 40, "large": 80}
+MARKER_SIZES: dict[MarkerSizeName, int] = {"small": 20, "medium": 40, "large": 80, "xlarge": 120}
+
+
+@dataclass
+class OverlapConfig:
+    """Controls deliberate point overlap for testing clump decomposition."""
+    overlap_fraction: float = 0.3
+    n_overlap_pairs: int = 5
+    n_overlap_triples: int = 0
+    n_isolated: int = 10
 
 
 @dataclass
@@ -38,6 +48,10 @@ class PlotConfig:
     bg_color: str = "white"
     seed: int | None = None
     label: str = ""
+    fill_style: FillStyle = "filled"
+    edge_width: float = 1.5
+    marker_color: str = "black"
+    overlap: OverlapConfig | None = None
 
 
 @dataclass
@@ -88,10 +102,66 @@ def _generate_clumped_points(
     return np.concatenate(all_x), np.concatenate(all_y)
 
 
+def _generate_overlap_points(
+    config: PlotConfig, overlap: OverlapConfig, rng: np.random.Generator
+) -> tuple[np.ndarray, np.ndarray]:
+    """Generate points with deliberate overlaps at a specified fraction of marker diameter."""
+    x_span = config.x_range[1] - config.x_range[0]
+    y_span = config.y_range[1] - config.y_range[0]
+
+    marker_size_pts = MARKER_SIZES[config.marker_size]
+    # Approximate marker diameter in data units (based on figure geometry)
+    # matplotlib marker size is in points^2, so diameter ~ 2*sqrt(size/pi) points
+    # At 150 DPI, 8in wide figure, axis fills ~80% → pixels_per_data_unit ≈ (8*150*0.8) / x_span
+    pixels_per_data_x = (FIXED_FIGSIZE[0] * FIXED_DPI * 0.8) / x_span
+    pixels_per_data_y = (FIXED_FIGSIZE[1] * FIXED_DPI * 0.8) / y_span
+    marker_diameter_pts = 2 * np.sqrt(marker_size_pts / np.pi)
+    # Convert from points to data units (72 points per inch)
+    marker_diam_data_x = marker_diameter_pts * (FIXED_DPI / 72.0) / pixels_per_data_x
+    marker_diam_data_y = marker_diameter_pts * (FIXED_DPI / 72.0) / pixels_per_data_y
+
+    overlap_dist_x = marker_diam_data_x * (1 - overlap.overlap_fraction)
+    overlap_dist_y = marker_diam_data_y * (1 - overlap.overlap_fraction)
+
+    all_x, all_y = [], []
+
+    # Generate isolated singletons
+    margin_x = x_span * 0.1
+    margin_y = y_span * 0.1
+    for _ in range(overlap.n_isolated):
+        all_x.append(rng.uniform(config.x_range[0] + margin_x, config.x_range[1] - margin_x))
+        all_y.append(rng.uniform(config.y_range[0] + margin_y, config.y_range[1] - margin_y))
+
+    # Generate overlapping pairs
+    for _ in range(overlap.n_overlap_pairs):
+        cx = rng.uniform(config.x_range[0] + margin_x * 2, config.x_range[1] - margin_x * 2)
+        cy = rng.uniform(config.y_range[0] + margin_y * 2, config.y_range[1] - margin_y * 2)
+        angle = rng.uniform(0, 2 * np.pi)
+        all_x.append(cx - overlap_dist_x * 0.5 * np.cos(angle))
+        all_y.append(cy - overlap_dist_y * 0.5 * np.sin(angle))
+        all_x.append(cx + overlap_dist_x * 0.5 * np.cos(angle))
+        all_y.append(cy + overlap_dist_y * 0.5 * np.sin(angle))
+
+    # Generate overlapping triples (tight triangle arrangement)
+    for _ in range(overlap.n_overlap_triples):
+        cx = rng.uniform(config.x_range[0] + margin_x * 2, config.x_range[1] - margin_x * 2)
+        cy = rng.uniform(config.y_range[0] + margin_y * 2, config.y_range[1] - margin_y * 2)
+        for k in range(3):
+            angle = k * (2 * np.pi / 3) + rng.uniform(0, np.pi / 6)
+            all_x.append(cx + overlap_dist_x * 0.6 * np.cos(angle))
+            all_y.append(cy + overlap_dist_y * 0.6 * np.sin(angle))
+
+    x = np.clip(np.array(all_x), config.x_range[0], config.x_range[1])
+    y = np.clip(np.array(all_y), config.y_range[0], config.y_range[1])
+    return x, y
+
+
 def generate_plot(config: PlotConfig, output_dir: Path, clump: ClumpSpec | None = None) -> PlotOutput:
     rng = np.random.default_rng(config.seed)
 
-    if clump is not None:
+    if config.overlap is not None:
+        x, y = _generate_overlap_points(config, config.overlap, rng)
+    elif clump is not None:
         x, y = _generate_clumped_points(config, clump, rng)
     else:
         x = rng.uniform(config.x_range[0], config.x_range[1], config.n_points)
@@ -101,14 +171,21 @@ def generate_plot(config: PlotConfig, output_dir: Path, clump: ClumpSpec | None 
     fig.set_facecolor(config.bg_color)
     ax.set_facecolor(config.bg_color)
 
-    ax.scatter(
-        x, y,
-        marker=config.marker,
-        s=MARKER_SIZES[config.marker_size],
-        alpha=config.opacity,
-        color="black",
-        zorder=5,
-    )
+    scatter_kwargs: dict = {
+        "marker": config.marker,
+        "s": MARKER_SIZES[config.marker_size],
+        "alpha": config.opacity,
+        "zorder": 5,
+    }
+
+    if config.fill_style == "unfilled":
+        scatter_kwargs["facecolors"] = "none"
+        scatter_kwargs["edgecolors"] = config.marker_color
+        scatter_kwargs["linewidths"] = config.edge_width
+    else:
+        scatter_kwargs["color"] = config.marker_color
+
+    ax.scatter(x, y, **scatter_kwargs)
 
     ax.set_xlim(config.x_range)
     ax.set_ylim(config.y_range)
@@ -127,7 +204,7 @@ def generate_plot(config: PlotConfig, output_dir: Path, clump: ClumpSpec | None 
         "x_range": list(config.x_range),
         "y_range": list(config.y_range),
         "params": {
-            "n_points": config.n_points,
+            "n_points": len(x),
             "marker": config.marker,
             "marker_size": MARKER_SIZES[config.marker_size],
             "opacity": config.opacity,
@@ -135,6 +212,10 @@ def generate_plot(config: PlotConfig, output_dir: Path, clump: ClumpSpec | None 
             "bg_color": config.bg_color,
             "dpi": FIXED_DPI,
             "figsize": list(FIXED_FIGSIZE),
+            "fill_style": config.fill_style,
+            "edge_width": config.edge_width,
+            "marker_color": config.marker_color,
+            "has_overlaps": config.overlap is not None,
         },
     }
     json_path.write_text(json.dumps(ground_truth, indent=2))
@@ -265,6 +346,157 @@ RANDOM_SCATTER_CONFIGS: list[PlotConfig] = [
     PlotConfig(n_points=20, marker="D", marker_size="medium", seed=None, label="rand_20_diamond"),
 ]
 
+# --- Phase 14: Overlap test suite ---
+
+OVERLAP_CONFIGS: list[PlotConfig] = [
+    # Category A: Filled circle overlaps (varying degree)
+    PlotConfig(
+        marker="o", marker_size="medium", seed=100, label="ovl_01_filled_20pct",
+        overlap=OverlapConfig(overlap_fraction=0.2, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", seed=101, label="ovl_02_filled_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", seed=102, label="ovl_03_filled_50pct",
+        overlap=OverlapConfig(overlap_fraction=0.5, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", seed=103, label="ovl_04_filled_70pct",
+        overlap=OverlapConfig(overlap_fraction=0.7, n_overlap_pairs=3, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", seed=104, label="ovl_05_filled_triple_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=2, n_overlap_triples=3, n_isolated=8),
+    ),
+    PlotConfig(
+        marker="o", marker_size="large", seed=105, label="ovl_06_filled_large_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="small", seed=106, label="ovl_07_filled_small_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=8, n_isolated=15),
+    ),
+    # Linear chain (5 points, each overlaps neighbor by 40%)
+    PlotConfig(
+        marker="o", marker_size="medium", seed=107, label="ovl_08_filled_chain",
+        overlap=OverlapConfig(overlap_fraction=0.4, n_overlap_pairs=0, n_overlap_triples=0, n_isolated=5),
+        # Note: chain generated via clump with tight radius; overlap here for metadata
+    ),
+    # Dense cluster (10 points with 20-50% overlaps)
+    PlotConfig(
+        marker="o", marker_size="medium", seed=108, label="ovl_09_filled_dense_cluster",
+        overlap=OverlapConfig(overlap_fraction=0.35, n_overlap_pairs=3, n_overlap_triples=3, n_isolated=5),
+    ),
+
+    # Category B: Unfilled circle overlaps
+    PlotConfig(
+        marker="o", marker_size="medium", fill_style="unfilled", edge_width=1.5, seed=110,
+        label="ovl_10_hollow_20pct",
+        overlap=OverlapConfig(overlap_fraction=0.2, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", fill_style="unfilled", edge_width=1.5, seed=111,
+        label="ovl_11_hollow_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", fill_style="unfilled", edge_width=1.5, seed=112,
+        label="ovl_12_hollow_50pct",
+        overlap=OverlapConfig(overlap_fraction=0.5, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="large", fill_style="unfilled", edge_width=2.0, seed=113,
+        label="ovl_13_hollow_large_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", fill_style="unfilled", edge_width=1.5, seed=114,
+        label="ovl_14_hollow_triple_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=2, n_overlap_triples=3, n_isolated=8),
+    ),
+    PlotConfig(
+        marker="o", marker_size="xlarge", fill_style="unfilled", edge_width=2.5, seed=115,
+        label="ovl_15_hollow_xlarge_20pct",
+        overlap=OverlapConfig(overlap_fraction=0.2, n_overlap_pairs=4, n_isolated=8),
+    ),
+
+    # Category C: Various backgrounds
+    PlotConfig(
+        marker="o", marker_size="medium", bg_color="lightgray", seed=120,
+        label="ovl_16_gray_bg_filled_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", bg_color="#e0e0e0", seed=121,
+        label="ovl_17_medgray_bg_filled_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", bg_color="#ebebeb", grid=True, seed=122,
+        label="ovl_18_ggplot_bg_grid_filled_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", marker_color="blue", seed=123,
+        label="ovl_19_blue_markers_filled_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", marker_color="red", bg_color="lightgray", seed=124,
+        label="ovl_20_red_markers_gray_bg",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", fill_style="unfilled", edge_width=1.5,
+        bg_color="#ebebeb", grid=True, seed=125, label="ovl_21_hollow_ggplot_grid",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=10),
+    ),
+
+    # Category D: Various point sizes
+    PlotConfig(
+        marker="o", marker_size="small", seed=130, label="ovl_22_small_filled_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=8, n_isolated=15),
+    ),
+    PlotConfig(
+        marker="o", marker_size="xlarge", seed=131, label="ovl_23_xlarge_filled_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=4, n_isolated=8),
+    ),
+    PlotConfig(
+        marker="o", marker_size="xlarge", seed=132, label="ovl_24_xlarge_filled_50pct",
+        overlap=OverlapConfig(overlap_fraction=0.5, n_overlap_pairs=4, n_isolated=8),
+    ),
+
+    # Category E: Mixed isolated + clumped (higher ratio of clumped)
+    PlotConfig(
+        marker="o", marker_size="medium", seed=140, label="ovl_25_mixed_40iso_10clump",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=40),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", seed=141, label="ovl_26_mixed_many_clumps",
+        overlap=OverlapConfig(overlap_fraction=0.35, n_overlap_pairs=8, n_overlap_triples=4, n_isolated=20),
+    ),
+    PlotConfig(
+        marker="o", marker_size="large", seed=142, label="ovl_27_mixed_large_heavy_overlap",
+        overlap=OverlapConfig(overlap_fraction=0.5, n_overlap_pairs=6, n_overlap_triples=2, n_isolated=15),
+    ),
+
+    # Category F: Point count constraint tests (same plots, tested with/without hint)
+    PlotConfig(
+        marker="o", marker_size="medium", seed=150, label="ovl_28_hint_test_20pts",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=10),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", seed=151, label="ovl_29_hint_test_30pts",
+        overlap=OverlapConfig(overlap_fraction=0.4, n_overlap_pairs=5, n_overlap_triples=2, n_isolated=14),
+    ),
+    PlotConfig(
+        marker="o", marker_size="large", seed=152, label="ovl_30_hint_test_heavy",
+        overlap=OverlapConfig(overlap_fraction=0.5, n_overlap_pairs=6, n_overlap_triples=3, n_isolated=10),
+    ),
+]
+
 
 def generate_baseline_suite(output_dir: Path) -> list[PlotOutput]:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -272,6 +504,11 @@ def generate_baseline_suite(output_dir: Path) -> list[PlotOutput]:
     for cfg, clump in CLUMP_CONFIGS:
         results.append(generate_plot(cfg, output_dir, clump=clump))
     return results
+
+
+def generate_overlap_suite(output_dir: Path) -> list[PlotOutput]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return [generate_plot(cfg, output_dir) for cfg in OVERLAP_CONFIGS]
 
 
 def generate_randomized_suite(output_dir: Path) -> list[PlotOutput]:
@@ -289,9 +526,13 @@ if __name__ == "__main__":
     results = generate_baseline_suite(out)
     print(f"Generated {len(results)} baseline plots in {out}")
 
+    ovl_out = Path(__file__).parent / "fixtures_overlap"
+    ovl_results = generate_overlap_suite(ovl_out)
+    print(f"Generated {len(ovl_results)} overlap plots in {ovl_out}")
+
     rand_out = Path(__file__).parent / "fixtures_random"
     rand_results = generate_randomized_suite(rand_out)
     print(f"Generated {len(rand_results)} randomized plots in {rand_out}")
 
-    for r in results + rand_results:
-        print(f"  {r.image_path.name}: {r.config.n_points} points")
+    for r in results + ovl_results + rand_results:
+        print(f"  {r.image_path.name}: {len(r.x)} points")

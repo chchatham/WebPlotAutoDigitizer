@@ -126,8 +126,83 @@ All checkboxes checked. All tests pass. App deployable to a hosted service.
 - [x] 4 new tests (2 blob detector bounds tests + 2 API tests), all 47 tests pass
 - [x] Frontend builds cleanly
 - [x] Deploy to Railway
-- [x] Phase 11b fixes: Back button label, 15% bounding box padding, wider About page
+- [x] Phase 11b fixes: Back button label (transparent→light gray bg), 15% bounding box padding, wider About page
+- [x] Phase 11c fixes: Background-color-based plot bbox detection for ggplot-style plots, robust button styling
+- [x] Deploy 11c to Railway
+- [x] Fix TS6133 build error (unused `getHandlePixelPos`), redeploy successfully (deployment 947e28f9)
 - [ ] User confirms all changes work in production
 
+## Phase 12 — User-Requested Refinements (2026-05-04)
+- [x] Bounding box: clamp corners to visible image bounds (init + drag)
+- [x] X-axis handles: dragging vertically translates both handles together (updates xAxisY)
+- [x] Y-axis handles: dragging horizontally translates both handles together (updates yAxisX)
+- [x] About page: remove fixed-width constraints — content fills available viewport width
+- [x] Frontend builds cleanly, all 47 tests pass
+- [x] Deploy Phase 12 to Railway (deployment d183b59a, SUCCESS)
+
+## Phase 13 — Y-Coordinate Fix, Calibration Persistence, Layout (2026-05-04)
+- [x] Fix Y-coordinate scalar offset: `y_pixel_range` was using `Math.max(yBottomY, xAxisY)` instead of `yBottomY`
+- [x] Calibration persistence: "Adjust calibration" now restores prior handle positions, data ranges, and bounding box
+- [x] About page fluid layout: separate render path with 100vw container, borderless full-width iframe
+- [x] Stripped Vite scaffold CSS from `#root` (text-align:center, flex column, margin:0 auto)
+- [x] New test: `test_digitize_y_coordinate_accuracy` — end-to-end API test verifying data coordinate accuracy including Y
+- [x] All 48 tests pass, frontend builds cleanly
+- [x] Deploy Phase 13 to Railway (final: deployment 27a52dea, SUCCESS)
+- [ ] User confirms all changes
+
+## Phase 14 — Shape-Aware Clump Decomposition (2026-05-04)
+> Improve detection of overlapping/clumped points by estimating marker shape from singletons, then fitting markers into clump silhouettes. Add optional user point-count constraint.
+
+### 14a — Test Framework Expansion
+- [x] Add `OverlapConfig` dataclass to `generate_plots.py` (controls overlap fraction, pair count, isolated count)
+- [x] Add `fill_style` ("filled"/"unfilled") and `edge_width` params to `PlotConfig`
+- [x] Add `marker_color` param to `PlotConfig` (support non-black markers)
+- [x] Generate overlap test suite: ~30 new cases (filled overlaps, unfilled overlaps, various backgrounds, various sizes, mixed isolated+clumped, point-count-hint tests)
+- [x] Update `eval_digitizer.py` with `clump_recall`, `singleton_recall`, `clump_precision` metrics
+- [x] New test file `tests/test_shape_aware.py` with test stubs
+- [x] New test file `tests/test_clump_decomposition.py` with integration test stubs
+- [x] All existing 48 tests still pass after framework changes (63 pass total, 14 skipped stubs)
+
+### 14b — Marker Profile Estimation
+- [x] Add `MarkerProfile` dataclass to `backend/models.py`
+- [x] Implement `estimate_marker_profile()` function: analyze singletons → compute mean radius, area, hollow/filled, edge width, circularity, fill ratio
+- [x] Hollow detection: fill_ratio threshold at ~0.7 to classify filled vs unfilled
+- [x] Unit tests for profile estimation on synthetic singletons (4 tests pass)
+
+### 14c — Filled-Marker Clump Decomposition
+- [x] Implement `decompose_filled_clump()`: iterative erosion + distance transform, guided by marker profile
+- [x] Point count estimation: `N = round(clump_area / profile.mean_area)`
+- [x] Center refinement via local peak-finding in distance transform
+- [x] Integration tests: filled circle overlaps at 20%, 30%, 50% overlap fractions — measure clump recall
+- [ ] Clump recall ≥ 75% on filled overlaps with ≤50% overlap (currently ~40%+, needs tuning)
+
+### 14d — Hollow-Marker Clump Decomposition
+- [x] Implement `decompose_hollow_clump()`: Hough circle detection with known radius ± tolerance
+- [x] Fallback to filled-marker algorithm when Hough finds too few
+- [x] Integration tests: unfilled circle overlaps — measure clump recall
+- [ ] Clump recall ≥ 85% on unfilled circle overlaps (currently ~30%+, needs tuning)
+
+### 14e — User Point Count Constraint
+- [x] Add `expected_point_count: int | None` to `/api/digitize` request parsing
+- [x] Pass through to digitizers (optional param, default None)
+- [x] Implement constraint pressure logic: soft adjustment of thresholds toward target count
+- [x] Frontend: add "Expected number of points" input on AxisCalibration screen
+- [x] Update `frontend/src/api.ts` to include `expected_point_count` in request
+- [x] Tests: point count hint effect test passes (correct hint produces valid results, no crash)
+
+### 14f — ShapeAwareDetector & Hybrid Routing
+- [x] Create `backend/digitizers/shape_aware.py` implementing `ShapeAwareDetector`
+- [x] Integrate profile estimation → clump decomposition pipeline
+- [x] Update `HybridDigitizer` to route to ShapeAwareDetector when clumps detected
+- [x] Routing condition: >20% of detected area is in clumps (contours > 1.8x median)
+- [x] Full eval comparison: ShapeAwareDetector vs Phase 13 HybridDigitizer on overlap test suite (documented in progress.md)
+- [x] All existing tests still pass (78 pass, no regression)
+- [x] `/api/digitize` < 10s with shape-aware decomposition active
+
+### 14g — Deployment
+- [x] Frontend builds cleanly
+- [x] Deploy to Railway (deployment 8abf8b28, SUCCESS)
+- [ ] User confirms improved clump detection in production
+
 ## Current Focus
-Phase 11+11b deployed. Awaiting user testing at https://webplotautodigitizer-production.up.railway.app
+Phase 14 — Shape-aware clump decomposition. Start with 14a (test framework expansion).

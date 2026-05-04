@@ -93,12 +93,60 @@ Format: 🚧 SIGN: description
 
 ## Axis Calibration UI Guardrails (added Phase 11)
 
-🚧 SIGN: X-axis handles ONLY move horizontally (single degree of freedom). Y-axis handles ONLY move vertically. The axes are assumed perfectly horizontal and vertical. Do not allow free 2D drag on axis handles.
+🚧 SIGN: X-axis handles move freely in 2D: horizontal movement repositions that handle's X coordinate, vertical movement translates BOTH X handles together (updates xAxisY). Y-axis handles move freely in 2D: vertical movement repositions that handle's Y coordinate, horizontal movement translates BOTH Y handles together (updates yAxisX). This replaced the old single-DoF constraint per user request.
 
-🚧 SIGN: The axis lines themselves are draggable to reposition the shared coordinate — X-axis line drags up/down (changes xAxisY), Y-axis line drags left/right (changes yAxisX). Handle circles take priority over line hit-testing.
+🚧 SIGN: The axis lines themselves are ALSO draggable to reposition the shared coordinate — X-axis line drags up/down (changes xAxisY), Y-axis line drags left/right (changes yAxisX). Handle circles take priority over line hit-testing.
 
 🚧 SIGN: The detection bounding box (orange) defines WHERE to search for points. The axis handles (blue/green) define HOW to map pixel→data coordinates. These are two independent concepts — do not conflate them.
 
 🚧 SIGN: `DetectionBounds` is optional in the digitize API and in all `BaseDigitizer.digitize()` signatures. When absent, digitizers fall back to axis range + 10% padding. This preserves backward compatibility with all existing tests and the eval harness.
 
 🚧 SIGN: The zoom panel reads from the original-resolution image, not the scaled canvas. It uses `ctx.drawImage(image, srcX, srcY, srcSize, srcSize, 0, 0, ZOOM_SIZE, ZOOM_SIZE)` with `imageSmoothingEnabled = false` for pixel-precise magnification.
+
+## Axis Detection Guardrails (added Phase 11c)
+
+🚧 SIGN: Hough line detection alone is NOT sufficient for plot bbox detection. ggplot2/seaborn plots use grid lines instead of border lines, so Hough picks up grid lines as boundaries and cuts off the plot area. Always combine with background-color detection (`_find_plot_bbox_background`), and use whichever method returns the larger area.
+
+🚧 SIGN: `_find_plot_bbox_background` detects the gray rectangular plot area by thresholding for pixels in the 200–250 grayscale range (not white, not dark). This works for ggplot2 (~235 gray), seaborn, and similar plot styles. If a plot has a white background with no distinct plot area color, this method returns None and Hough is used as fallback.
+
+🚧 SIGN: The default detection bounding box should be initialized with at least 15% padding beyond the detected axis range, BUT clamped to image dimensions. Real-world plots commonly have data points beyond their labeled axis range. Bounding box corners must also be clamped during drag so they never go off-screen.
+
+## Build & Deploy Guardrails (added Iteration 8)
+
+🚧 SIGN: Always run `npm run build` locally before deploying to Railway. The Dockerfile multi-stage build runs `tsc -b && vite build`, and TypeScript strict mode (e.g., TS6133 unused variables) will fail the build silently — Railway keeps serving the old container, so the failure is invisible unless you check `railway deployment list` or `railway logs --build --latest`.
+
+🚧 SIGN: After `railway up --detach`, verify the deploy succeeded by checking `railway deployment list` for SUCCESS status AND hitting the health endpoint. Do not assume the deploy worked — 3 consecutive deploys failed silently in this project before being caught.
+
+🚧 SIGN: When removing UI helper functions during refactoring, grep for all usages before deleting. But also: when adding helper functions, use them or don't define them. Dead code in TypeScript strict mode breaks production builds.
+
+## Calibration Data Flow Guardrails (added Phase 13)
+
+🚧 SIGN: The `y_pixel_range` in `handleConfirm` must use `[yBottomY, yTopY]` — the Y-axis handle positions. NEVER mix in `xAxisY` (the X-axis line position). The X-axis line and Y-axis handles are independent UI elements that can diverge. Using `Math.max(yBottomY, xAxisY)` caused a scalar Y-coordinate offset bug in production.
+
+🚧 SIGN: When a user returns to the calibration screen via "Adjust calibration," the component must restore the prior calibration (handle positions, data ranges, bounding box). Calling `detectAxes` again throws away the user's work. The `previousCalibration` prop gates this: if present, skip the API call entirely.
+
+🚧 SIGN: Any new end-to-end digitization test must verify BOTH X and Y data coordinate accuracy, not just point count or match rate. The `test_digitize_y_coordinate_accuracy` test specifically asserts `mean_error_y < 1.0` to catch scalar offset bugs.
+
+## Layout Guardrails (added Phase 13)
+
+🚧 SIGN: The About page uses a completely separate render path in App.tsx (`if (page === "about") return ...`) with a `100vw` fluid container and full-width borderless iframe. Do NOT nest it inside the digitizer's `maxWidth: 800` container — that was the root cause of the narrow About page bug across multiple fix attempts.
+
+🚧 SIGN: The `#root` CSS in `index.css` must NOT include `text-align: center`, `display: flex`, `margin: 0 auto`, or a fixed `width`. These Vite scaffold defaults conflict with the app's own layout. Keep `#root` minimal: just `width: 100%`, `min-height: 100svh`, `box-sizing: border-box`.
+
+## Button Styling Guardrails (added Phase 11c)
+
+🚧 SIGN: Never use `background: transparent` with `color` as an inline style override for secondary buttons. The global CSS `button { color: white; background: #2563eb; }` creates a cascade that can make text invisible. Always give secondary buttons an explicit opaque background (e.g., `#f1f5f9`) with explicit dark text color (`#1e293b`).
+
+## Shape-Aware Clump Decomposition Guardrails (added Phase 14)
+
+🚧 SIGN: The marker profile MUST be estimated from singletons (isolated high-confidence blobs), never from clumps. A minimum of 3 singletons is required to compute a reliable profile. If fewer than 3 singletons exist, fall back to the existing watershed splitting algorithm.
+
+🚧 SIGN: The `expected_point_count` user input is a SOFT constraint (weight 0.3). It biases thresholds but never forces exact agreement. The user may be wrong — the algorithm must degrade gracefully when given an incorrect hint (not worse than no hint at all).
+
+🚧 SIGN: The ShapeAwareDetector is additive — it augments, not replaces, the existing detection pipeline. It only activates when clumps are detected (>20% of area in merged contours). When no clumps exist, the existing blob/template/hybrid path runs unchanged. All 48 existing tests must pass without modification.
+
+🚧 SIGN: Hollow marker detection uses fill_ratio = (foreground pixels inside contour) / (convex hull area). Threshold at 0.7: below = hollow, above = filled. This must be computed per-singleton and aggregated (median). Do not use a global threshold on the entire image.
+
+🚧 SIGN: For hollow/unfilled circle decomposition, Hough circle detection uses the estimated radius ±2px as min/max radius bounds. Wider bounds produce too many false positives on grid intersections. When Hough finds fewer circles than expected, fall back to the filled-marker erosion algorithm.
+
+🚧 SIGN: The `BaseDigitizer` abstract interface is NOT changed. `expected_point_count` is added as an optional keyword argument (default None) on concrete implementations. This preserves backward compatibility with existing tests and the eval harness.
