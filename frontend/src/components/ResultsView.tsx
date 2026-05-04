@@ -27,7 +27,6 @@ export default function ResultsView({ upload, calibration, onBack, onReset }: Pr
 
   useEffect(() => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
     img.onload = () => {
       setImage(img);
       setScale(Math.min(1, 760 / img.width));

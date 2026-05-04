@@ -39,7 +39,6 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
 
   useEffect(() => {
     const img = new Image();
-    img.crossOrigin = "anonymous";
     img.onload = () => {
       setImage(img);
       const maxWidth = 760;
