@@ -3,6 +3,7 @@ import "./App.css";
 import ImageUpload from "./components/ImageUpload";
 import AxisCalibrationView from "./components/AxisCalibration";
 import ResultsView from "./components/ResultsView";
+import ErrorBoundary from "./components/ErrorBoundary";
 import type { UploadResponse, Calibration } from "./api";
 
 type Page = "digitizer" | "about";
@@ -96,20 +97,22 @@ function App() {
         Upload a scatterplot image to extract its data points as CSV.
       </p>
 
-      {step === "upload" && <ImageUpload onUploaded={handleUploaded} />}
+      <ErrorBoundary onReset={reset}>
+        {step === "upload" && <ImageUpload onUploaded={handleUploaded} />}
 
-      {step === "calibrate" && upload && (
-        <AxisCalibrationView upload={upload} onCalibrated={handleCalibrated} onBack={reset} previousCalibration={calibration} />
-      )}
+        {step === "calibrate" && upload && (
+          <AxisCalibrationView upload={upload} onCalibrated={handleCalibrated} onBack={reset} previousCalibration={calibration} />
+        )}
 
-      {step === "results" && upload && calibration && (
-        <ResultsView
-          upload={upload}
-          calibration={calibration}
-          onBack={() => setStep("calibrate")}
-          onReset={reset}
-        />
-      )}
+        {step === "results" && upload && calibration && (
+          <ResultsView
+            upload={upload}
+            calibration={calibration}
+            onBack={() => setStep("calibrate")}
+            onReset={reset}
+          />
+        )}
+      </ErrorBoundary>
     </div>
   );
 }

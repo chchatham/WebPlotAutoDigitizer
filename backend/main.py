@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
@@ -98,11 +99,21 @@ async def digitize_endpoint(request: DigitizeRequest):
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Image not found")
 
+    cal_data = request.calibration
+    x_px = tuple(cal_data["x_pixel_range"])
+    y_px = tuple(cal_data["y_pixel_range"])
+
+    if abs(x_px[1] - x_px[0]) < 1e-6 or abs(y_px[1] - y_px[0]) < 1e-6:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid calibration: pixel ranges must not be zero-width",
+        )
+
     cal = AxisCalibration(
-        x_pixel_range=tuple(request.calibration["x_pixel_range"]),
-        y_pixel_range=tuple(request.calibration["y_pixel_range"]),
-        x_data_range=tuple(request.calibration["x_data_range"]),
-        y_data_range=tuple(request.calibration["y_data_range"]),
+        x_pixel_range=x_px,
+        y_pixel_range=y_px,
+        x_data_range=tuple(cal_data["x_data_range"]),
+        y_data_range=tuple(cal_data["y_data_range"]),
     )
 
     bounds = None
@@ -114,22 +125,30 @@ async def digitize_endpoint(request: DigitizeRequest):
             y_max_px=request.detection_bounds["y_max"],
         )
 
-    digitizer = HybridDigitizer()
-    result = digitizer.digitize(image, cal, bounds, request.expected_point_count)
+    try:
+        digitizer = HybridDigitizer()
+        result = digitizer.digitize(image, cal, bounds, request.expected_point_count)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Digitization error: {str(e)}")
+
+    def sanitize(v: float) -> float:
+        if math.isnan(v) or math.isinf(v):
+            return 0.0
+        return v
 
     return {
         "points": [
             {
-                "x_data": p.x_data,
-                "y_data": p.y_data,
-                "x_pixel": p.x_pixel,
-                "y_pixel": p.y_pixel,
-                "confidence": p.confidence,
+                "x_data": sanitize(p.x_data),
+                "y_data": sanitize(p.y_data),
+                "x_pixel": sanitize(p.x_pixel),
+                "y_pixel": sanitize(p.y_pixel),
+                "confidence": sanitize(p.confidence),
             }
             for p in result.points
         ],
         "method": result.method,
-        "elapsed_ms": result.elapsed_ms,
+        "elapsed_ms": sanitize(result.elapsed_ms),
     }
 
 

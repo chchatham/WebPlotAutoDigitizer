@@ -104,6 +104,90 @@ def test_digitize_without_detection_bounds(client):
     assert "points" in data
 
 
+def test_digitize_missing_image_returns_404(client):
+    """When the image ID doesn't exist, return 404 with a JSON error message."""
+    resp = client.post("/api/digitize", json={
+        "image_id": "nonexistent_id",
+        "calibration": {
+            "x_pixel_range": [50, 350],
+            "y_pixel_range": [250, 50],
+            "x_data_range": [0, 10],
+            "y_data_range": [0, 10],
+        },
+    })
+    assert resp.status_code == 404
+    data = resp.json()
+    assert "detail" in data
+    assert "not found" in data["detail"].lower()
+
+
+def test_digitize_degenerate_calibration_returns_400(client):
+    """When pixel ranges have zero width, return 400 instead of crashing."""
+    img = Image.new("RGB", (400, 300), color=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    buf.seek(0)
+
+    upload_resp = client.post("/api/upload", files={"file": ("test.png", buf, "image/png")})
+    image_id = upload_resp.json()["image_id"]
+
+    resp = client.post("/api/digitize", json={
+        "image_id": image_id,
+        "calibration": {
+            "x_pixel_range": [200, 200],
+            "y_pixel_range": [150, 150],
+            "x_data_range": [0, 10],
+            "y_data_range": [0, 10],
+        },
+    })
+    assert resp.status_code == 400
+    assert "zero-width" in resp.json()["detail"].lower()
+
+
+def test_digitize_response_has_no_nan_or_null(client):
+    """All numeric fields in the digitize response must be finite numbers, never NaN/null."""
+    import cv2
+    img_arr = np.ones((400, 600, 3), dtype=np.uint8) * 255
+    for x, y in [(150, 200), (300, 100), (450, 300)]:
+        cv2.circle(img_arr, (x, y), 8, (0, 0, 0), -1)
+
+    pil_img = Image.fromarray(img_arr)
+    buf = io.BytesIO()
+    pil_img.save(buf, "PNG")
+    buf.seek(0)
+
+    upload_resp = client.post("/api/upload", files={"file": ("test.png", buf, "image/png")})
+    image_id = upload_resp.json()["image_id"]
+
+    resp = client.post("/api/digitize", json={
+        "image_id": image_id,
+        "calibration": {
+            "x_pixel_range": [50, 550],
+            "y_pixel_range": [350, 50],
+            "x_data_range": [0, 10],
+            "y_data_range": [0, 10],
+        },
+        "detection_bounds": {
+            "x_min": 30,
+            "x_max": 570,
+            "y_min": 30,
+            "y_max": 370,
+        },
+        "expected_point_count": 3,
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data["points"], list)
+    assert isinstance(data["elapsed_ms"], (int, float))
+    assert np.isfinite(data["elapsed_ms"])
+
+    for i, pt in enumerate(data["points"]):
+        for field in ["x_data", "y_data", "x_pixel", "y_pixel", "confidence"]:
+            val = pt[field]
+            assert val is not None, f"point[{i}].{field} is None"
+            assert np.isfinite(val), f"point[{i}].{field} = {val} (not finite)"
+
+
 def test_digitize_y_coordinate_accuracy(client, tmp_path):
     """End-to-end test: upload synthetic plot, digitize via API, verify returned
     data coordinates (what the CSV would contain) match ground truth."""

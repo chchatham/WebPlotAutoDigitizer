@@ -67,21 +67,42 @@ export async function digitize(
   calibration: Calibration,
 ): Promise<DigitizeResponse> {
   const { detection_bounds, expected_point_count, ...cal } = calibration;
-  const res = await fetch(`${API_BASE}/api/digitize`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      image_id: imageId,
-      calibration: cal,
-      detection_bounds: detection_bounds ?? null,
-      expected_point_count: expected_point_count ?? null,
-    }),
-  });
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/digitize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image_id: imageId,
+        calibration: cal,
+        detection_bounds: detection_bounds ?? null,
+        expected_point_count: expected_point_count ?? null,
+      }),
+    });
+  } catch (e) {
+    throw new Error(
+      `Network error: ${e instanceof Error ? e.message : "could not reach server"}`,
+    );
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail ?? "Digitization failed");
+    throw new Error(err.detail ?? `Server error (${res.status})`);
   }
-  return res.json();
+
+  let data: DigitizeResponse;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error("Invalid response from server (malformed JSON)");
+  }
+
+  if (!data || !Array.isArray(data.points)) {
+    throw new Error("Invalid response: missing points array");
+  }
+
+  return data;
 }
 
 export function getImageUrl(imageId: string): string {

@@ -19,9 +19,20 @@ export default function ResultsView({ upload, calibration, onBack, onReset }: Pr
 
   useEffect(() => {
     setLoading(true);
+    setError(null);
+    setResult(null);
     digitize(upload.image_id, calibration)
-      .then(setResult)
-      .catch((e) => setError(e.message))
+      .then((data) => {
+        if (!data || !Array.isArray(data.points)) {
+          setError("Invalid response from server");
+          return;
+        }
+        setResult(data);
+      })
+      .catch((e) => {
+        const msg = e instanceof Error ? e.message : String(e ?? "Unknown error");
+        setError(msg || "Digitization failed");
+      })
       .finally(() => setLoading(false));
   }, [upload.image_id, calibration]);
 
@@ -60,14 +71,34 @@ export default function ResultsView({ upload, calibration, onBack, onReset }: Pr
   }, [image, result, scale]);
 
   if (loading) return <p>Digitizing...</p>;
-  if (error) return <p style={{ color: "#dc2626" }}>Error: {error}</p>;
-  if (!result) return null;
+  if (error) return (
+    <div>
+      <p style={{ color: "#dc2626" }}>Error: {error}</p>
+      <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+        <button onClick={onBack}>Adjust calibration</button>
+        <button onClick={onReset} style={{ background: "#f1f5f9", border: "1px solid #94a3b8", color: "#1e293b" }}>
+          New image
+        </button>
+      </div>
+    </div>
+  );
+  if (!result) return (
+    <div>
+      <p style={{ color: "#dc2626" }}>No results received from server.</p>
+      <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+        <button onClick={onBack}>Adjust calibration</button>
+        <button onClick={onReset} style={{ background: "#f1f5f9", border: "1px solid #94a3b8", color: "#1e293b" }}>
+          New image
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <div>
       <h2>Detected Points</h2>
       <p style={{ color: "#6b7280", fontSize: 14 }}>
-        Method: {result.method} | {result.points.length} points | {result.elapsed_ms.toFixed(0)}ms
+        Method: {result.method} | {result.points.length} points | {(result.elapsed_ms ?? 0).toFixed(0)}ms
       </p>
 
       <canvas ref={canvasRef} style={{ border: "1px solid #e5e7eb" }} />
