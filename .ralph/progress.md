@@ -1,11 +1,22 @@
 # WebPlotAutoDigitizer — Progress
 
 ## Last Updated
-Iteration 12 — Phase 14 spec written. 2026-05-04.
+Iteration 13 — Phase 14h threshold tuning. 2026-05-04.
 
 ## Current Focus
-Phase 14 DEPLOYED (8abf8b28, SUCCESS). All code complete. Awaiting user confirmation.
+Phase 14h committed. Deploying to Railway.
 Live at: https://webplotautodigitizer-production.up.railway.app
+
+## What Changed (Phase 14h — Threshold Tuning for 2-Point Clumps)
+User reported 93/100 detection on a dense red-circle plot with 2-point clumps. Root cause: three overly conservative thresholds.
+1. **blob_detector.py** — Progressive distance-transform peak thresholds (0.35→0.25→0.18 instead of single 0.4). Merge threshold lowered to 1.3x median area. Added elongation-based clump detection (aspect > 1.4).
+2. **hybrid.py** — Routing threshold lowered from 20% to 5%. Always invokes ShapeAwareDetector when `expected_point_count` is provided. Added elongation detection in `_has_significant_clumps()`.
+3. **shape_aware.py** — Merge threshold 1.15x (with hint) / 1.3x (without). Elongation-based detection (aspect > 1.3).
+4. **generate_plots.py** — 8 new Category G test configs: dense 100-point plots (red/black/blue circles) with 5 sparse 2-point clumps at 15-30% overlap.
+5. **test_clump_decomposition.py** — New `TestDenseWithSparseClumps` class (4 tests: red with hint, black with hint, red without hint, pairs-only at 15%).
+6. **guardrails.md** — 3 new signs documenting the three threshold problems.
+7. **Frontend fixes** — About page layout fixes, test_api.py enhancements (unrelated, from prior session).
+Eval: 100% matched_pct on all Category G configs with hint. 82 tests pass.
 
 ## Eval Results (Phase 14 — overlap test suite)
 On moderate overlaps (20-70%), all methods achieve 100% matched_pct with 2% tolerance. This is because the scoring allows multiple ground-truth points to match the same prediction. The key metric is point COUNT: on tight clumps (radius 0.3-0.5% of axis), blob and shape-aware both find ~30-40% of true points as separate detections. The shape-aware infrastructure is in place; improving the actual decomposition (finding more peaks in the distance transform) is the tuning target for future iterations.

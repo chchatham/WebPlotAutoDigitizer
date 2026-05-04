@@ -36,10 +36,15 @@ def _split_merged_contour(
     cv2.drawContours(mask, [shifted], -1, 255, -1)
 
     dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
-    _, thresh_peaks = cv2.threshold(dist, dist.max() * 0.4, 255, 0)
-    thresh_peaks = thresh_peaks.astype(np.uint8)
 
-    labels_arr, n_labels = ndimage.label(thresh_peaks)
+    # Try progressively lower thresholds to find at least 2 peaks
+    for peak_frac in [0.35, 0.25, 0.18]:
+        _, thresh_peaks = cv2.threshold(dist, dist.max() * peak_frac, 255, 0)
+        thresh_peaks = thresh_peaks.astype(np.uint8)
+        labels_arr, n_labels = ndimage.label(thresh_peaks)
+        if n_labels >= 2:
+            break
+
     if n_labels <= 1:
         return []
 
@@ -123,7 +128,18 @@ class BlobDetector(BaseDigitizer):
             if area < min_area:
                 continue
 
-            if area > merge_threshold and median_area > 0 and area > median_area * 1.8:
+            # Detect merged contours: area-based OR elongation-based
+            is_merged = False
+            if median_area > 0 and area > median_area * 1.3:
+                is_merged = True
+            elif median_area > 0 and area > median_area * 1.0:
+                # Check elongation: 2 merged circles form an elongated shape
+                x_bb, y_bb, w_bb, h_bb = cv2.boundingRect(contour)
+                aspect = max(w_bb, h_bb) / (min(w_bb, h_bb) + 1e-6)
+                if aspect > 1.4:
+                    is_merged = True
+
+            if is_merged:
                 sub_blobs = _split_merged_contour(thresh, contour, median_area)
                 if len(sub_blobs) >= 2:
                     for cx, cy, conf in sub_blobs:

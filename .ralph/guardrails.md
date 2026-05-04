@@ -149,4 +149,10 @@ Format: 🚧 SIGN: description
 
 🚧 SIGN: For hollow/unfilled circle decomposition, Hough circle detection uses the estimated radius ±2px as min/max radius bounds. Wider bounds produce too many false positives on grid intersections. When Hough finds fewer circles than expected, fall back to the filled-marker erosion algorithm.
 
+🚧 SIGN: The merge/clump classification threshold must be ≤1.3x median area (not 1.8x). A 2-point overlap at 30% produces only ~1.4-1.5x area. The old 1.8x threshold missed all 2-point clumps. Additionally, elongation (aspect ratio > 1.3) is a secondary clump signal — an elongated blob above median area is almost certainly 2+ merged markers.
+
+🚧 SIGN: The hybrid routing threshold for ShapeAwareDetector must be 5% (not 20%) of total contour area. With 100 mostly-separated points and ~3-4 small clumps, total clump area ≈ 2-3%. The old 20% threshold meant ShapeAwareDetector was never invoked on real-world plots. When `expected_point_count` is provided, always invoke ShapeAwareDetector regardless of clump area percentage.
+
+🚧 SIGN: The blob detector's distance-transform peak threshold should try multiple values (0.35, 0.25, 0.18) rather than a single 0.4. A 2-point overlap with ~30% overlap has a gentle plateau in the distance transform — the 0.4 threshold fails to split it into 2 peaks.
+
 🚧 SIGN: The `BaseDigitizer` abstract interface is NOT changed. `expected_point_count` is added as an optional keyword argument (default None) on concrete implementations. This preserves backward compatibility with existing tests and the eval harness.

@@ -255,3 +255,58 @@ This is a lightweight addition — one `<input>` field and one extra key in the 
 - With correct point count hint: clump recall improves by ≥10 percentage points
 - All existing 48 tests still pass
 - `/api/digitize` < 10s even with shape-aware decomposition active
+
+---
+
+## Phase 14h — Threshold Tuning for 2-Point Clumps (post-user-testing)
+
+### Problem
+
+User tested with a ~100-point plot (red filled circles on white background). System detected 93/100 points. A visible 2-3 point clump forming an elongated "peanut" shape was not decomposed. Root cause analysis identified three overly conservative thresholds:
+
+1. **Hybrid routing threshold (`_has_significant_clumps`) = 20%**: With 100 mostly-separated points and ~3-4 small clumps, total clump area ≈ 2-3% of total — far below 20%. ShapeAwareDetector is never invoked.
+
+2. **Merge/clump classification threshold = 1.8x median area**: A 2-point overlap with ~30% area overlap produces a merged contour of only ~1.4-1.5x single marker area. These are classified as singletons and emitted as a single centroid, losing 1 point.
+
+3. **Blob detector distance transform peak threshold = 0.4**: Too high to separate gentle 2-point overlaps where the distance transform has a plateau rather than distinct peaks.
+
+### Fix: Three-Pronged Threshold Reduction
+
+**A. Lower hybrid routing threshold: 20% → 5%**
+
+With `expected_point_count` provided, use 0% (always route to shape-aware). Without hint, use 5% instead of 20%. Rationale: if there are ANY merged contours, it's worth running shape-aware since the overhead is only ~1-2ms.
+
+**B. Lower merge classification threshold: 1.8x → 1.3x**
+
+Change in both `shape_aware.py` and `blob_detector.py`. A 2-point overlap at ~20% produces ~1.3x area; at ~30% produces ~1.5x. The old 1.8x only catches overlaps ≥ 40-50%.
+
+Additionally, add an **elongation criterion**: classify a contour as a clump if its bounding box aspect ratio > 1.5 AND area > median * 1.0. An elongated blob is almost certainly 2+ merged markers even if the area is only slightly above median.
+
+**C. Lower blob detector split threshold: 0.4 → 0.25**
+
+Lower the distance-transform peak threshold in `_split_merged_contour` to detect peaks in gentler overlaps. Also lower `n_labels <= 1` early-exit to try harder.
+
+### New Test Cases
+
+Add to `OVERLAP_CONFIGS`:
+- **Dense-with-sparse-clumps**: 100 points, ~90 isolated + 5 pairs (0.3 overlap) — mimics the user's actual scenario
+- **Red markers**: `marker_color="red"` versions of existing configs
+- **2-point-only overlaps**: configs where ALL overlapping groups are exactly 2 points (no triples)
+- **Small overlap fractions**: 15-20% overlap (currently just barely merge contours)
+
+### Stronger `expected_point_count` Constraint
+
+When `expected_point_count` is provided and `detected < expected`:
+- Always invoke ShapeAwareDetector (bypass the 5% routing check)
+- Lower the merge threshold further to 1.15x (any contour noticeably larger than a singleton)
+- After initial detection, scan for contours between 1.15x and 1.3x median area that have elongation > 1.3; try to split each one via distance transform
+
+### File Changes
+
+| File | Change |
+|------|--------|
+| `backend/digitizers/hybrid.py` | Lower routing threshold; bypass when hint provided |
+| `backend/digitizers/shape_aware.py` | Lower merge threshold; add elongation criterion; strengthen hint |
+| `backend/digitizers/blob_detector.py` | Lower split threshold from 0.4 to 0.25, merge threshold from 1.8x to 1.3x |
+| `tests/generate_plots.py` | Add dense-with-sparse-clumps configs, red markers, 2-point-only configs |
+| `tests/test_clump_decomposition.py` | Add tests for 2-point clump detection, dense plots with hint |

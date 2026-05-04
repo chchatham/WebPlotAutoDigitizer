@@ -201,8 +201,22 @@ All checkboxes checked. All tests pass. App deployable to a hosted service.
 
 ### 14g — Deployment
 - [x] Frontend builds cleanly
-- [x] Deploy to Railway (deployment 8abf8b28, SUCCESS)
+- [x] Deploy to Railway (deployment 8035bd88, SUCCESS — with improved NMS decomposition)
 - [ ] User confirms improved clump detection in production
 
+### 14h — Threshold Tuning for 2-Point Clumps (2026-05-04)
+- [x] Analyze user-reported failure: 93/100 detected, peanut-shaped 2-point clumps missed
+- [x] Root cause: three overly conservative thresholds (routing 20%→5%, merge 1.8x→1.3x, DT peak 0.4→progressive)
+- [x] Fix blob_detector.py: progressive peak thresholds (0.35/0.25/0.18), merge threshold 1.3x + elongation detection
+- [x] Fix hybrid.py: routing threshold 5%, always use shape-aware with hint, elongation-based clump detection
+- [x] Fix shape_aware.py: merge threshold 1.15x (with hint) / 1.3x (without), elongation-based detection
+- [x] Add 8 new Category G test configs (dense 100-point plots with sparse 2-point clumps)
+- [x] Add TestDenseWithSparseClumps test class (4 integration tests)
+- [x] Eval verification: 100% detection on all Category G configs with hint
+- [x] All 82 tests pass
+- [x] Commit and push
+- [ ] Deploy to Railway
+- [ ] User confirms improved detection
+
 ## Current Focus
-Phase 14 — Shape-aware clump decomposition. Start with 14a (test framework expansion).
+Phase 14h complete. Commit, push, deploy.

@@ -256,3 +256,94 @@ class TestShapeAwareOnOverlaps:
         """Full pipeline must complete in < 10 seconds."""
         _, result = self._run_shape_aware(tmp_path, 8)  # dense cluster
         assert result.elapsed_ms < 10000
+
+
+class TestDenseWithSparseClumps:
+    """Tests for the user's real-world scenario: ~100 points with a few 2-point clumps."""
+
+    def test_dense_red_100pts_with_hint(self, tmp_path: Path):
+        """100 red circles with 5 overlapping pairs — user provides correct count."""
+        cfg = OVERLAP_CONFIGS[30]  # ovl_31_dense_red_100pts
+        out = generate_plot(cfg, tmp_path)
+        img = np.array(Image.open(out.image_path).convert("RGB"))
+        gt = json.loads(out.json_path.read_text())
+        cal = _make_calibration_from_gt(gt, img)
+        n_expected = len(gt["x"])
+
+        detector = HybridDigitizer()
+        result = detector.digitize(img, cal, expected_point_count=n_expected)
+
+        pred_x = np.array([p.x_data for p in result.points])
+        pred_y = np.array([p.y_data for p in result.points])
+
+        score = score_predictions_with_clumps(
+            pred_x, pred_y,
+            np.array(gt["x"]), np.array(gt["y"]),
+            tuple(gt["x_range"]), tuple(gt["y_range"]),
+            marker_size=gt["params"]["marker_size"],
+            tolerance_pct=2.0,
+        )
+        # With hint, should detect nearly all points
+        assert score.matched_pct >= 90.0, (
+            f"Dense red 100pts: {score.matched_pct:.1f}% matched "
+            f"({len(result.points)}/{n_expected} detected, method={result.method})"
+        )
+
+    def test_dense_black_100pts_with_hint(self, tmp_path: Path):
+        """100 black circles with 5 overlapping pairs — user provides correct count."""
+        cfg = OVERLAP_CONFIGS[32]  # ovl_33_dense_black_100pts
+        out = generate_plot(cfg, tmp_path)
+        img = np.array(Image.open(out.image_path).convert("RGB"))
+        gt = json.loads(out.json_path.read_text())
+        cal = _make_calibration_from_gt(gt, img)
+        n_expected = len(gt["x"])
+
+        detector = HybridDigitizer()
+        result = detector.digitize(img, cal, expected_point_count=n_expected)
+
+        pred_x = np.array([p.x_data for p in result.points])
+        pred_y = np.array([p.y_data for p in result.points])
+
+        score = score_predictions_with_clumps(
+            pred_x, pred_y,
+            np.array(gt["x"]), np.array(gt["y"]),
+            tuple(gt["x_range"]), tuple(gt["y_range"]),
+            marker_size=gt["params"]["marker_size"],
+            tolerance_pct=2.0,
+        )
+        assert score.matched_pct >= 90.0, (
+            f"Dense black 100pts: {score.matched_pct:.1f}% matched "
+            f"({len(result.points)}/{n_expected} detected, method={result.method})"
+        )
+
+    def test_dense_red_without_hint(self, tmp_path: Path):
+        """100 red circles without hint — should still detect most points."""
+        cfg = OVERLAP_CONFIGS[30]  # ovl_31_dense_red_100pts
+        out = generate_plot(cfg, tmp_path)
+        img = np.array(Image.open(out.image_path).convert("RGB"))
+        gt = json.loads(out.json_path.read_text())
+        cal = _make_calibration_from_gt(gt, img)
+
+        detector = HybridDigitizer()
+        result = detector.digitize(img, cal)
+
+        n_expected = len(gt["x"])
+        assert len(result.points) >= n_expected * 0.85, (
+            f"Dense red without hint: {len(result.points)}/{n_expected} detected"
+        )
+
+    def test_2point_pairs_only(self, tmp_path: Path):
+        """Only 2-point overlaps at 15% — the subtlest clumps."""
+        cfg = OVERLAP_CONFIGS[35]  # ovl_36_pairs_only_15pct
+        out = generate_plot(cfg, tmp_path)
+        img = np.array(Image.open(out.image_path).convert("RGB"))
+        gt = json.loads(out.json_path.read_text())
+        cal = _make_calibration_from_gt(gt, img)
+        n_expected = len(gt["x"])
+
+        detector = HybridDigitizer()
+        result = detector.digitize(img, cal, expected_point_count=n_expected)
+
+        assert len(result.points) >= n_expected * 0.80, (
+            f"2-point pairs 15%: {len(result.points)}/{n_expected} detected"
+        )

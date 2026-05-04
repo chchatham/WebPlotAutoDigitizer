@@ -495,6 +495,47 @@ OVERLAP_CONFIGS: list[PlotConfig] = [
         marker="o", marker_size="large", seed=152, label="ovl_30_hint_test_heavy",
         overlap=OverlapConfig(overlap_fraction=0.5, n_overlap_pairs=6, n_overlap_triples=3, n_isolated=10),
     ),
+
+    # Category G: Dense plots with sparse 2-point clumps (user's real-world scenario)
+    PlotConfig(
+        marker="o", marker_size="medium", marker_color="red", seed=160,
+        label="ovl_31_dense_red_100pts",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=90),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", marker_color="red", seed=161,
+        label="ovl_32_dense_red_50pts",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=40),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", seed=162, label="ovl_33_dense_black_100pts",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=90),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", marker_color="red", seed=163,
+        label="ovl_34_dense_red_20pct_overlap",
+        overlap=OverlapConfig(overlap_fraction=0.2, n_overlap_pairs=5, n_isolated=90),
+    ),
+    PlotConfig(
+        marker="o", marker_size="medium", marker_color="blue", seed=164,
+        label="ovl_35_dense_blue_30pct",
+        overlap=OverlapConfig(overlap_fraction=0.3, n_overlap_pairs=5, n_isolated=90),
+    ),
+    # 2-point-only overlaps at small fractions (15-20%)
+    PlotConfig(
+        marker="o", marker_size="medium", seed=165, label="ovl_36_pairs_only_15pct",
+        overlap=OverlapConfig(overlap_fraction=0.15, n_overlap_pairs=8, n_isolated=20),
+    ),
+    PlotConfig(
+        marker="o", marker_size="large", seed=166, label="ovl_37_pairs_only_large_25pct",
+        overlap=OverlapConfig(overlap_fraction=0.25, n_overlap_pairs=6, n_isolated=15),
+    ),
+    # Large marker with few subtle overlaps
+    PlotConfig(
+        marker="o", marker_size="large", marker_color="red", seed=167,
+        label="ovl_38_large_red_subtle",
+        overlap=OverlapConfig(overlap_fraction=0.25, n_overlap_pairs=4, n_isolated=30),
+    ),
 ]
 
 

@@ -467,7 +467,12 @@ class ShapeAwareDetector(BaseDigitizer):
 
         roi_h, roi_w = roi.shape
         min_area = max(4, (roi_h * roi_w) * 0.00005)
-        merge_threshold = profile.mean_area_px * 1.8
+
+        # Use a lower merge threshold when user provides expected count
+        if expected_point_count is not None:
+            merge_threshold = profile.mean_area_px * 1.15
+        else:
+            merge_threshold = profile.mean_area_px * 1.3
 
         points: list[DetectedPoint] = []
         singletons_found = 0
@@ -481,6 +486,14 @@ class ShapeAwareDetector(BaseDigitizer):
                 continue
             if area > merge_threshold:
                 clump_contours.append(c)
+            elif area > profile.mean_area_px * 1.0:
+                # Check elongation: 2 merged circles form an elongated shape
+                x_bb, y_bb, w_bb, h_bb = cv2.boundingRect(c)
+                aspect = max(w_bb, h_bb) / (min(w_bb, h_bb) + 1e-6)
+                if aspect > 1.3:
+                    clump_contours.append(c)
+                else:
+                    singleton_contours.append(c)
             else:
                 singleton_contours.append(c)
 

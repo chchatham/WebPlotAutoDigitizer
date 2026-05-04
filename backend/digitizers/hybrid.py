@@ -75,7 +75,7 @@ def _has_significant_clumps(image: np.ndarray, calibration: AxisCalibration, det
         return False
 
     median_area = float(np.median(normal_areas))
-    merge_threshold = median_area * 1.8
+    merge_threshold = median_area * 1.3
 
     total_area = 0.0
     clump_area = 0.0
@@ -86,11 +86,16 @@ def _has_significant_clumps(image: np.ndarray, calibration: AxisCalibration, det
         total_area += a
         if a > merge_threshold:
             clump_area += a
+        elif a > median_area * 1.0:
+            x_bb, y_bb, w_bb, h_bb = cv2.boundingRect(c)
+            aspect = max(w_bb, h_bb) / (min(w_bb, h_bb) + 1e-6)
+            if aspect > 1.3:
+                clump_area += a
 
     if total_area == 0:
         return False
 
-    return (clump_area / total_area) > 0.20
+    return (clump_area / total_area) > 0.05
 
 
 class HybridDigitizer(BaseDigitizer):
@@ -110,7 +115,10 @@ class HybridDigitizer(BaseDigitizer):
         blob_result = self.blob.digitize(image, calibration, detection_bounds)
 
         # Check if shape-aware decomposition should be used
-        if _has_significant_clumps(image, calibration, detection_bounds):
+        # Always use shape-aware when user provides expected count, otherwise check for clumps
+        use_shape_aware = expected_point_count is not None or _has_significant_clumps(image, calibration, detection_bounds)
+
+        if use_shape_aware:
             from backend.digitizers.shape_aware import ShapeAwareDetector
             shape_result = ShapeAwareDetector().digitize(
                 image, calibration, detection_bounds, expected_point_count
@@ -120,7 +128,7 @@ class HybridDigitizer(BaseDigitizer):
                     shape_result.method != "shape-aware-fallback"):
                 shape_avg_conf = float(np.mean([p.confidence for p in shape_result.points])) if shape_result.points else 0
                 blob_avg_conf = float(np.mean([p.confidence for p in blob_result.points])) if blob_result.points else 0
-                if shape_avg_conf >= blob_avg_conf * 0.6:
+                if shape_avg_conf >= blob_avg_conf * 0.5:
                     elapsed_ms = (time.perf_counter() - t0) * 1000
                     return DetectionResult(
                         points=shape_result.points,
