@@ -23,18 +23,13 @@ class AxisDetectionResult:
     confidence: float
 
 
-def _find_plot_bbox(gray: np.ndarray) -> tuple[int, int, int, int]:
-    """Find the plot area bounding box (x_min, y_min, x_max, y_max in pixels).
-
-    Looks for the rectangular region bounded by axis lines. For matplotlib plots,
-    this is typically a prominent rectangle with dark borders.
-    """
+def _find_plot_bbox_hough(gray: np.ndarray) -> tuple[int, int, int, int] | None:
+    """Find plot bbox using Hough line detection (works for plots with axis border lines)."""
     edges = cv2.Canny(gray, 50, 150)
 
     lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=10)
     if lines is None:
-        h, w = gray.shape
-        return (int(w * 0.1), int(h * 0.1), int(w * 0.9), int(h * 0.9))
+        return None
 
     h_lines = []
     v_lines = []
@@ -50,7 +45,7 @@ def _find_plot_bbox(gray: np.ndarray) -> tuple[int, int, int, int]:
     h, w = gray.shape
 
     if not h_lines or not v_lines:
-        return (int(w * 0.1), int(h * 0.1), int(w * 0.9), int(h * 0.9))
+        return None
 
     h_lines.sort(key=lambda l: l[4], reverse=True)
     v_lines.sort(key=lambda l: l[4], reverse=True)
@@ -71,9 +66,80 @@ def _find_plot_bbox(gray: np.ndarray) -> tuple[int, int, int, int]:
     y_max = min(h - 1, y_max)
 
     if x_max - x_min < w * 0.2 or y_max - y_min < h * 0.2:
-        return (int(w * 0.1), int(h * 0.1), int(w * 0.9), int(h * 0.9))
+        return None
 
     return (x_min, y_min, x_max, y_max)
+
+
+def _find_plot_bbox_background(gray: np.ndarray) -> tuple[int, int, int, int] | None:
+    """Find plot bbox by detecting the colored/gray background rectangle.
+
+    Many plot styles (ggplot2, seaborn, etc.) render the plot area with a
+    distinct background color (typically light gray ~230-245). This method
+    finds that rectangle, which is more reliable than Hough lines for plots
+    that use grid lines instead of border lines.
+    """
+    h, w = gray.shape
+
+    white_thresh = 250
+    near_white = gray >= white_thresh
+    not_white = gray < white_thresh
+    dark = gray < 200
+
+    bg_mask = (~near_white & ~dark).astype(np.uint8) * 255
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    bg_mask = cv2.morphologyEx(bg_mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+    bg_mask = cv2.morphologyEx(bg_mask, cv2.MORPH_OPEN, kernel, iterations=2)
+
+    contours, _ = cv2.findContours(bg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    min_area = h * w * 0.1
+    candidates = []
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area >= min_area:
+            x, y, cw, ch = cv2.boundingRect(c)
+            candidates.append((x, y, x + cw, y + ch, area))
+
+    if not candidates:
+        return None
+
+    best = max(candidates, key=lambda c: c[4])
+    x_min, y_min, x_max, y_max = best[0], best[1], best[2], best[3]
+
+    x_min = max(0, x_min)
+    y_min = max(0, y_min)
+    x_max = min(w - 1, x_max)
+    y_max = min(h - 1, y_max)
+
+    if x_max - x_min < w * 0.2 or y_max - y_min < h * 0.2:
+        return None
+
+    return (x_min, y_min, x_max, y_max)
+
+
+def _find_plot_bbox(gray: np.ndarray) -> tuple[int, int, int, int]:
+    """Find the plot area bounding box (x_min, y_min, x_max, y_max in pixels).
+
+    Uses two strategies and picks the larger result:
+    1. Background color detection (for ggplot/seaborn with gray plot areas)
+    2. Hough line detection (for matplotlib with axis border lines)
+    """
+    h, w = gray.shape
+    fallback = (int(w * 0.1), int(h * 0.1), int(w * 0.9), int(h * 0.9))
+
+    bg_bbox = _find_plot_bbox_background(gray)
+    hough_bbox = _find_plot_bbox_hough(gray)
+
+    if bg_bbox and hough_bbox:
+        bg_area = (bg_bbox[2] - bg_bbox[0]) * (bg_bbox[3] - bg_bbox[1])
+        hough_area = (hough_bbox[2] - hough_bbox[0]) * (hough_bbox[3] - hough_bbox[1])
+        return bg_bbox if bg_area >= hough_area else hough_bbox
+
+    return bg_bbox or hough_bbox or fallback
 
 
 def _extract_axis_numbers(gray: np.ndarray, bbox: tuple[int, int, int, int]) -> tuple[

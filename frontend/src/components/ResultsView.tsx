@@ -105,7 +105,7 @@ export default function ResultsView({ upload, calibration, onBack, onReset }: Pr
 
       <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
         <button onClick={onBack}>Adjust calibration</button>
-        <button onClick={onReset} style={{ background: "transparent", border: "1px solid #94a3b8" }}>
+        <button onClick={onReset} style={{ background: "#f1f5f9", border: "1px solid #94a3b8", color: "#1e293b" }}>
           New image
         </button>
       </div>

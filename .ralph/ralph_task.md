@@ -125,8 +125,9 @@ All checkboxes checked. All tests pass. App deployable to a hosted service.
 - [x] API accepts detection_bounds in /api/digitize request
 - [x] 4 new tests (2 blob detector bounds tests + 2 API tests), all 47 tests pass
 - [x] Frontend builds cleanly
-- [ ] Deploy to Railway
-- [ ] User confirms all 3 changes work in production
+- [x] Deploy to Railway
+- [x] Phase 11b fixes: Back button label, 15% bounding box padding, wider About page
+- [ ] User confirms all changes work in production
 
 ## Current Focus
-Phase 11 implemented locally. Ready to deploy.
+Phase 11+11b deployed. Awaiting user testing at https://webplotautodigitizer-production.up.railway.app

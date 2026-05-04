@@ -492,7 +492,7 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
 
       <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
         <button onClick={handleConfirm}>Confirm &amp; Digitize</button>
-        <button onClick={onBack} style={{ background: "transparent", border: "1px solid #94a3b8", color: "#475569" }}>
+        <button onClick={onBack} style={{ background: "#f1f5f9", border: "1px solid #94a3b8", color: "#1e293b" }}>
           Back
         </button>
       </div>
