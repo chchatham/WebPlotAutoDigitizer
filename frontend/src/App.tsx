@@ -31,7 +31,7 @@ function App() {
   };
 
   return (
-    <div style={{ maxWidth: 800, margin: "0 auto", padding: 24 }}>
+    <div style={{ maxWidth: page === "about" ? 1400 : 800, margin: "0 auto", padding: 24 }}>
       <nav style={{
         display: "flex",
         alignItems: "center",

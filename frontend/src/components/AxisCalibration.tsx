@@ -7,30 +7,46 @@ interface Props {
   onBack: () => void;
 }
 
-interface HandlePos {
-  x: number;
-  y: number;
-}
+type HandleId =
+  | "xLeft" | "xRight" | "yBottom" | "yTop"
+  | "xAxisLine" | "yAxisLine"
+  | "bbTL" | "bbTR" | "bbBL" | "bbBR";
 
-type HandleId = "xLeft" | "xRight" | "yBottom" | "yTop";
+const HANDLE_RADIUS = 7;
+const HIT_RADIUS = 14;
+const ZOOM_SIZE = 200;
+const ZOOM_FACTOR = 8;
 
 export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState<HandleId | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const zoomCanvasRef = useRef<HTMLCanvasElement>(null);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [scale, setScale] = useState(1);
 
-  const [xLeft, setXLeft] = useState<HandlePos>({ x: 0, y: 0 });
-  const [xRight, setXRight] = useState<HandlePos>({ x: 0, y: 0 });
-  const [yBottom, setYBottom] = useState<HandlePos>({ x: 0, y: 0 });
-  const [yTop, setYTop] = useState<HandlePos>({ x: 0, y: 0 });
+  const [xLeftX, setXLeftX] = useState(0);
+  const [xRightX, setXRightX] = useState(0);
+  const [xAxisY, setXAxisY] = useState(0);
+
+  const [yBottomY, setYBottomY] = useState(0);
+  const [yTopY, setYTopY] = useState(0);
+  const [yAxisX, setYAxisX] = useState(0);
+
+  const [bbLeft, setBbLeft] = useState(0);
+  const [bbRight, setBbRight] = useState(0);
+  const [bbTop, setBbTop] = useState(0);
+  const [bbBottom, setBbBottom] = useState(0);
 
   const [xMinVal, setXMinVal] = useState("0");
   const [xMaxVal, setXMaxVal] = useState("10");
   const [yMinVal, setYMinVal] = useState("0");
   const [yMaxVal, setYMaxVal] = useState("10");
+
+  const [activeHandle, setActiveHandle] = useState<HandleId | null>(null);
+  const [activeHandlePos, setActiveHandlePos] = useState<{ x: number; y: number } | null>(null);
+  const dragStartRef = useRef<{ mx: number; my: number; origVal: number } | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -39,12 +55,21 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
         const ax = res.axes;
         const [xMinPx, xMaxPx] = ax.x_pixel_range;
         const [yMinPx, yMaxPx] = ax.y_pixel_range;
-        // X-axis: horizontal line at bottom (yMinPx is the larger y = bottom)
-        setXLeft({ x: xMinPx, y: yMinPx });
-        setXRight({ x: xMaxPx, y: yMinPx });
-        // Y-axis: vertical line at left (xMinPx)
-        setYBottom({ x: xMinPx, y: yMinPx });
-        setYTop({ x: xMinPx, y: yMaxPx });
+
+        setXLeftX(xMinPx);
+        setXRightX(xMaxPx);
+        setXAxisY(yMinPx);
+
+        setYAxisX(xMinPx);
+        setYBottomY(yMinPx);
+        setYTopY(yMaxPx);
+
+        const xSpan = xMaxPx - xMinPx;
+        const ySpan = yMinPx - yMaxPx;
+        setBbLeft(Math.max(0, xMinPx - xSpan * 0.15));
+        setBbRight(xMaxPx + xSpan * 0.15);
+        setBbTop(Math.max(0, yMaxPx - ySpan * 0.15));
+        setBbBottom(yMinPx + ySpan * 0.15);
 
         setXMinVal(String(ax.x_data_range[0]));
         setXMaxVal(String(ax.x_data_range[1]));
@@ -82,6 +107,20 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
     img.src = getImageUrl(upload.image_id);
   }, [upload]);
 
+  const getHandlePixelPos = useCallback((id: HandleId): { x: number; y: number } => {
+    switch (id) {
+      case "xLeft": return { x: xLeftX, y: xAxisY };
+      case "xRight": return { x: xRightX, y: xAxisY };
+      case "yBottom": return { x: yAxisX, y: yBottomY };
+      case "yTop": return { x: yAxisX, y: yTopY };
+      case "bbTL": return { x: bbLeft, y: bbTop };
+      case "bbTR": return { x: bbRight, y: bbTop };
+      case "bbBL": return { x: bbLeft, y: bbBottom };
+      case "bbBR": return { x: bbRight, y: bbBottom };
+      default: return { x: 0, y: 0 };
+    }
+  }, [xLeftX, xRightX, xAxisY, yAxisX, yBottomY, yTopY, bbLeft, bbRight, bbTop, bbBottom]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !image) return;
@@ -92,38 +131,65 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
 
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
+    // Bounding box (orange dashed)
+    ctx.strokeStyle = "#d97706";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(
+      bbLeft * scale, bbTop * scale,
+      (bbRight - bbLeft) * scale, (bbBottom - bbTop) * scale,
+    );
+    ctx.setLineDash([]);
+
+    // Bounding box corner handles (orange)
+    const bbHandles: { id: HandleId; x: number; y: number }[] = [
+      { id: "bbTL", x: bbLeft, y: bbTop },
+      { id: "bbTR", x: bbRight, y: bbTop },
+      { id: "bbBL", x: bbLeft, y: bbBottom },
+      { id: "bbBR", x: bbRight, y: bbBottom },
+    ];
+    for (const h of bbHandles) {
+      const sx = h.x * scale;
+      const sy = h.y * scale;
+      ctx.fillStyle = dragging === h.id ? "#dc2626" : "#d97706";
+      ctx.fillRect(sx - 5, sy - 5, 10, 10);
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(sx - 5, sy - 5, 10, 10);
+    }
+
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 4]);
 
-    // X-axis line (blue)
+    // X-axis line (blue, horizontal)
     ctx.strokeStyle = "#2563eb";
     ctx.beginPath();
-    ctx.moveTo(xLeft.x * scale, xLeft.y * scale);
-    ctx.lineTo(xRight.x * scale, xRight.y * scale);
+    ctx.moveTo(xLeftX * scale, xAxisY * scale);
+    ctx.lineTo(xRightX * scale, xAxisY * scale);
     ctx.stroke();
 
-    // Y-axis line (green)
+    // Y-axis line (green, vertical)
     ctx.strokeStyle = "#16a34a";
     ctx.beginPath();
-    ctx.moveTo(yBottom.x * scale, yBottom.y * scale);
-    ctx.lineTo(yTop.x * scale, yTop.y * scale);
+    ctx.moveTo(yAxisX * scale, yBottomY * scale);
+    ctx.lineTo(yAxisX * scale, yTopY * scale);
     ctx.stroke();
 
     ctx.setLineDash([]);
 
-    const handles: { id: HandleId; pos: HandlePos; color: string; label: string }[] = [
-      { id: "xLeft", pos: xLeft, color: "#2563eb", label: "X min" },
-      { id: "xRight", pos: xRight, color: "#2563eb", label: "X max" },
-      { id: "yBottom", pos: yBottom, color: "#16a34a", label: "Y min" },
-      { id: "yTop", pos: yTop, color: "#16a34a", label: "Y max" },
+    const handles: { id: HandleId; x: number; y: number; color: string; label: string }[] = [
+      { id: "xLeft", x: xLeftX, y: xAxisY, color: "#2563eb", label: "X min" },
+      { id: "xRight", x: xRightX, y: xAxisY, color: "#2563eb", label: "X max" },
+      { id: "yBottom", x: yAxisX, y: yBottomY, color: "#16a34a", label: "Y min" },
+      { id: "yTop", x: yAxisX, y: yTopY, color: "#16a34a", label: "Y max" },
     ];
 
     for (const h of handles) {
-      const sx = h.pos.x * scale;
-      const sy = h.pos.y * scale;
+      const sx = h.x * scale;
+      const sy = h.y * scale;
       ctx.fillStyle = dragging === h.id ? "#dc2626" : h.color;
       ctx.beginPath();
-      ctx.arc(sx, sy, 7, 0, Math.PI * 2);
+      ctx.arc(sx, sy, HANDLE_RADIUS, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = "white";
       ctx.lineWidth = 2;
@@ -135,7 +201,100 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
       ctx.textBaseline = "middle";
       ctx.fillText(h.label, sx, sy);
     }
-  }, [image, xLeft, xRight, yBottom, yTop, scale, dragging]);
+  }, [image, xLeftX, xRightX, xAxisY, yAxisX, yBottomY, yTopY, bbLeft, bbRight, bbTop, bbBottom, scale, dragging]);
+
+  // Zoom panel
+  useEffect(() => {
+    const zoomCanvas = zoomCanvasRef.current;
+    if (!zoomCanvas || !image) return;
+
+    const ctx = zoomCanvas.getContext("2d")!;
+    zoomCanvas.width = ZOOM_SIZE;
+    zoomCanvas.height = ZOOM_SIZE;
+
+    if (!activeHandlePos) {
+      ctx.fillStyle = "#f1f5f9";
+      ctx.fillRect(0, 0, ZOOM_SIZE, ZOOM_SIZE);
+      ctx.fillStyle = "#94a3b8";
+      ctx.font = "13px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("Drag a handle to zoom", ZOOM_SIZE / 2, ZOOM_SIZE / 2);
+      return;
+    }
+
+    const srcSize = ZOOM_SIZE / ZOOM_FACTOR;
+    const srcX = activeHandlePos.x - srcSize / 2;
+    const srcY = activeHandlePos.y - srcSize / 2;
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(
+      image,
+      srcX, srcY, srcSize, srcSize,
+      0, 0, ZOOM_SIZE, ZOOM_SIZE,
+    );
+
+    // Crosshairs
+    ctx.strokeStyle = "rgba(220, 38, 38, 0.8)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(ZOOM_SIZE / 2, 0);
+    ctx.lineTo(ZOOM_SIZE / 2, ZOOM_SIZE);
+    ctx.moveTo(0, ZOOM_SIZE / 2);
+    ctx.lineTo(ZOOM_SIZE, ZOOM_SIZE / 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Center dot
+    ctx.fillStyle = "rgba(220, 38, 38, 0.9)";
+    ctx.beginPath();
+    ctx.arc(ZOOM_SIZE / 2, ZOOM_SIZE / 2, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Label
+    if (activeHandle) {
+      const labelMap: Record<string, string> = {
+        xLeft: "X min", xRight: "X max", yBottom: "Y min", yTop: "Y max",
+        bbTL: "Box TL", bbTR: "Box TR", bbBL: "Box BL", bbBR: "Box BR",
+        xAxisLine: "X-axis", yAxisLine: "Y-axis",
+      };
+      ctx.fillStyle = "rgba(0,0,0,0.7)";
+      ctx.fillRect(0, 0, ZOOM_SIZE, 20);
+      ctx.fillStyle = "white";
+      ctx.font = "bold 12px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(`${labelMap[activeHandle] ?? activeHandle} (${ZOOM_FACTOR}x zoom)`, ZOOM_SIZE / 2, 4);
+    }
+  }, [image, activeHandle, activeHandlePos]);
+
+  const hitTestAxisLine = useCallback(
+    (mx: number, my: number): HandleId | null => {
+      const lineHitDist = 8;
+
+      // X-axis line: horizontal at xAxisY, from xLeftX to xRightX
+      if (
+        mx >= xLeftX * scale + HIT_RADIUS &&
+        mx <= xRightX * scale - HIT_RADIUS &&
+        Math.abs(my - xAxisY * scale) < lineHitDist
+      ) {
+        return "xAxisLine";
+      }
+
+      // Y-axis line: vertical at yAxisX, from yTopY to yBottomY
+      if (
+        my >= yTopY * scale + HIT_RADIUS &&
+        my <= yBottomY * scale - HIT_RADIUS &&
+        Math.abs(mx - yAxisX * scale) < lineHitDist
+      ) {
+        return "yAxisLine";
+      }
+
+      return null;
+    },
+    [xLeftX, xRightX, xAxisY, yAxisX, yBottomY, yTopY, scale],
+  );
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -143,21 +302,54 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
 
-      const handles: { id: HandleId; pos: HandlePos }[] = [
-        { id: "xLeft", pos: xLeft },
-        { id: "xRight", pos: xRight },
-        { id: "yBottom", pos: yBottom },
-        { id: "yTop", pos: yTop },
+      // Check axis handles first (they're on top)
+      const axisHandles: { id: HandleId; x: number; y: number }[] = [
+        { id: "xLeft", x: xLeftX, y: xAxisY },
+        { id: "xRight", x: xRightX, y: xAxisY },
+        { id: "yBottom", x: yAxisX, y: yBottomY },
+        { id: "yTop", x: yAxisX, y: yTopY },
       ];
-
-      for (const h of handles) {
-        if (Math.hypot(mx - h.pos.x * scale, my - h.pos.y * scale) < 14) {
+      for (const h of axisHandles) {
+        if (Math.hypot(mx - h.x * scale, my - h.y * scale) < HIT_RADIUS) {
           setDragging(h.id);
+          setActiveHandle(h.id);
+          setActiveHandlePos({ x: h.x, y: h.y });
           return;
         }
       }
+
+      // Then bounding box corners
+      const bbCorners: { id: HandleId; x: number; y: number }[] = [
+        { id: "bbTL", x: bbLeft, y: bbTop },
+        { id: "bbTR", x: bbRight, y: bbTop },
+        { id: "bbBL", x: bbLeft, y: bbBottom },
+        { id: "bbBR", x: bbRight, y: bbBottom },
+      ];
+      for (const h of bbCorners) {
+        if (Math.hypot(mx - h.x * scale, my - h.y * scale) < HIT_RADIUS) {
+          setDragging(h.id);
+          setActiveHandle(h.id);
+          setActiveHandlePos({ x: h.x, y: h.y });
+          return;
+        }
+      }
+
+      // Then axis lines (drag to reposition shared coordinate)
+      const lineHit = hitTestAxisLine(mx, my);
+      if (lineHit) {
+        setDragging(lineHit);
+        setActiveHandle(lineHit);
+        if (lineHit === "xAxisLine") {
+          dragStartRef.current = { mx, my, origVal: xAxisY };
+          setActiveHandlePos({ x: (xLeftX + xRightX) / 2, y: xAxisY });
+        } else {
+          dragStartRef.current = { mx, my, origVal: yAxisX };
+          setActiveHandlePos({ x: yAxisX, y: (yTopY + yBottomY) / 2 });
+        }
+        return;
+      }
     },
-    [xLeft, xRight, yBottom, yTop, scale]
+    [xLeftX, xRightX, xAxisY, yAxisX, yBottomY, yTopY, bbLeft, bbRight, bbTop, bbBottom, scale, hitTestAxisLine],
   );
 
   const onMouseMove = useCallback(
@@ -167,30 +359,76 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
       const mx = (e.clientX - rect.left) / scale;
       const my = (e.clientY - rect.top) / scale;
 
-      if (dragging === "xLeft") {
-        setXLeft({ x: mx, y: my });
-      } else if (dragging === "xRight") {
-        setXRight({ x: mx, y: my });
-      } else if (dragging === "yBottom") {
-        setYBottom({ x: mx, y: my });
-      } else if (dragging === "yTop") {
-        setYTop({ x: mx, y: my });
+      let posX = mx;
+      let posY = my;
+
+      switch (dragging) {
+        case "xLeft":
+          setXLeftX(mx);
+          posY = xAxisY;
+          break;
+        case "xRight":
+          setXRightX(mx);
+          posY = xAxisY;
+          break;
+        case "yBottom":
+          setYBottomY(my);
+          posX = yAxisX;
+          break;
+        case "yTop":
+          setYTopY(my);
+          posX = yAxisX;
+          break;
+        case "xAxisLine":
+          setXAxisY(my);
+          posX = (xLeftX + xRightX) / 2;
+          posY = my;
+          break;
+        case "yAxisLine":
+          setYAxisX(mx);
+          posX = mx;
+          posY = (yTopY + yBottomY) / 2;
+          break;
+        case "bbTL":
+          setBbLeft(mx);
+          setBbTop(my);
+          break;
+        case "bbTR":
+          setBbRight(mx);
+          setBbTop(my);
+          break;
+        case "bbBL":
+          setBbLeft(mx);
+          setBbBottom(my);
+          break;
+        case "bbBR":
+          setBbRight(mx);
+          setBbBottom(my);
+          break;
       }
+
+      setActiveHandlePos({ x: posX, y: posY });
     },
-    [dragging, scale]
+    [dragging, scale, xAxisY, yAxisX, xLeftX, xRightX, yTopY, yBottomY],
   );
 
-  const onMouseUp = useCallback(() => setDragging(null), []);
+  const onMouseUp = useCallback(() => {
+    setDragging(null);
+    dragStartRef.current = null;
+  }, []);
 
   const handleConfirm = () => {
     const cal: Calibration = {
-      x_pixel_range: [xLeft.x, xRight.x],
-      y_pixel_range: [
-        Math.max(xLeft.y, yBottom.y),
-        Math.min(xRight.y, yTop.y),
-      ],
+      x_pixel_range: [xLeftX, xRightX],
+      y_pixel_range: [Math.max(yBottomY, xAxisY), yTopY],
       x_data_range: [parseFloat(xMinVal) || 0, parseFloat(xMaxVal) || 10],
       y_data_range: [parseFloat(yMinVal) || 0, parseFloat(yMaxVal) || 10],
+      detection_bounds: {
+        x_min: Math.min(bbLeft, bbRight),
+        x_max: Math.max(bbLeft, bbRight),
+        y_min: Math.min(bbTop, bbBottom),
+        y_max: Math.max(bbTop, bbBottom),
+      },
     };
     onCalibrated(cal);
   };
@@ -201,20 +439,37 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
   return (
     <div>
       <h2>Adjust Axis Calibration</h2>
-      <p style={{ fontSize: 14, color: "#6b7280" }}>
-        Drag handles to align with axis endpoints.
-        <span style={{ color: "#2563eb", fontWeight: 600 }}> Blue</span> = X-axis,
-        <span style={{ color: "#16a34a", fontWeight: 600 }}> Green</span> = Y-axis.
+      <p style={{ fontSize: 14, color: "#6b7280", marginBottom: 8 }}>
+        <span style={{ color: "#2563eb", fontWeight: 600 }}>Blue</span> handles = X-axis (drag left/right).{" "}
+        <span style={{ color: "#16a34a", fontWeight: 600 }}>Green</span> handles = Y-axis (drag up/down).{" "}
+        Drag the axis line itself to reposition it.
+      </p>
+      <p style={{ fontSize: 14, color: "#6b7280", marginBottom: 12 }}>
+        <span style={{ color: "#d97706", fontWeight: 600 }}>Orange box</span> = detection area. Expand it to cover all data points, including any beyond the axis min/max values.
       </p>
 
-      <canvas
-        ref={canvasRef}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUp}
-        onMouseLeave={onMouseUp}
-        style={{ cursor: dragging ? "grabbing" : "default", border: "1px solid #e5e7eb" }}
-      />
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+        <canvas
+          ref={canvasRef}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseUp}
+          style={{ cursor: dragging ? "grabbing" : "default", border: "1px solid #e5e7eb", flexShrink: 0 }}
+        />
+
+        <div style={{ flexShrink: 0 }}>
+          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 4, fontWeight: 600 }}>
+            Precision Zoom
+          </div>
+          <canvas
+            ref={zoomCanvasRef}
+            width={ZOOM_SIZE}
+            height={ZOOM_SIZE}
+            style={{ border: "1px solid #e5e7eb", borderRadius: 4, imageRendering: "pixelated" }}
+          />
+        </div>
+      </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16, maxWidth: 400 }}>
         <label style={{ color: "#2563eb" }}>
@@ -237,7 +492,7 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
 
       <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
         <button onClick={handleConfirm}>Confirm &amp; Digitize</button>
-        <button onClick={onBack} style={{ background: "transparent", border: "1px solid #94a3b8" }}>
+        <button onClick={onBack} style={{ background: "transparent", border: "1px solid #94a3b8", color: "#475569" }}>
           Back
         </button>
       </div>

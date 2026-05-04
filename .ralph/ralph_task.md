@@ -112,7 +112,21 @@ All checkboxes checked. All tests pass. App deployable to a hosted service.
 - [x] Fix points-outside-handles: digitizers expand ROI by 10% padding so edge points are found
 - [x] Clump test cases: 5 seeded clump configs + 4 randomized-per-run clump/scatter tests + watershed blob splitting
 - [x] All 43 tests pass
-- [ ] Deploy revised version to Railway for user testing
+- [x] Deploy revised version to Railway for user testing
+
+## Phase 11 — Axis Constraints, Zoom Panel, Detection Bounding Box
+- [x] Spec written (.ralph/spec_phase11.md)
+- [x] Constrained axis handles: X handles move horizontally only, Y handles move vertically only
+- [x] Axis line dragging: drag X-axis line up/down, Y-axis line left/right to reposition
+- [x] High-res zoom panel: 8x magnified view of active handle with crosshairs
+- [x] Detection bounding box: orange draggable rectangle defining point search area
+- [x] Backend: DetectionBounds dataclass, passed through API → digitizers
+- [x] All digitizers (blob, template, hybrid) accept optional detection_bounds for ROI
+- [x] API accepts detection_bounds in /api/digitize request
+- [x] 4 new tests (2 blob detector bounds tests + 2 API tests), all 47 tests pass
+- [x] Frontend builds cleanly
+- [ ] Deploy to Railway
+- [ ] User confirms all 3 changes work in production
 
 ## Current Focus
-Phase 10 refinements implemented. Deploying to Railway.
+Phase 11 implemented locally. Ready to deploy.

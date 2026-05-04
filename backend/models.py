@@ -54,5 +54,13 @@ class CalibrationRequest(BaseModel):
     calibration: dict
 
 
+@dataclass
+class DetectionBounds:
+    x_min_px: float
+    x_max_px: float
+    y_min_px: float
+    y_max_px: float
+
+
 class HealthResponse(BaseModel):
     status: str

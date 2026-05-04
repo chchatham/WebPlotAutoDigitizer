@@ -19,7 +19,7 @@ import numpy as np
 from backend.digitizers import BaseDigitizer
 from backend.digitizers.blob_detector import BlobDetector
 from backend.digitizers.template_matcher import TemplateMatcher
-from backend.models import AxisCalibration, DetectedPoint, DetectionResult
+from backend.models import AxisCalibration, DetectedPoint, DetectionBounds, DetectionResult
 
 
 class HybridDigitizer(BaseDigitizer):
@@ -27,11 +27,16 @@ class HybridDigitizer(BaseDigitizer):
         self.blob = BlobDetector()
         self.template = TemplateMatcher()
 
-    def digitize(self, image: np.ndarray, calibration: AxisCalibration) -> DetectionResult:
+    def digitize(
+        self,
+        image: np.ndarray,
+        calibration: AxisCalibration,
+        detection_bounds: DetectionBounds | None = None,
+    ) -> DetectionResult:
         t0 = time.perf_counter()
 
-        blob_result = self.blob.digitize(image, calibration)
-        template_result = self.template.digitize(image, calibration)
+        blob_result = self.blob.digitize(image, calibration, detection_bounds)
+        template_result = self.template.digitize(image, calibration, detection_bounds)
 
         blob_pts = blob_result.points
         tmpl_pts = template_result.points

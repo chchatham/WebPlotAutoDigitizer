@@ -90,3 +90,15 @@ Format: 🚧 SIGN: description
 🚧 SIGN: The blob detector uses distance-transform watershed to split merged contours that are >1.8x the median single-blob area. This handles clumped/overlapping markers. Do not remove this without verifying clump test cases still pass.
 
 🚧 SIGN: Some test cases use `seed=None` (randomized each run). These are intentional — they exercise the detector on fresh data. Do not add seeds to stabilize them; the assertion thresholds are set conservatively to allow variance.
+
+## Axis Calibration UI Guardrails (added Phase 11)
+
+🚧 SIGN: X-axis handles ONLY move horizontally (single degree of freedom). Y-axis handles ONLY move vertically. The axes are assumed perfectly horizontal and vertical. Do not allow free 2D drag on axis handles.
+
+🚧 SIGN: The axis lines themselves are draggable to reposition the shared coordinate — X-axis line drags up/down (changes xAxisY), Y-axis line drags left/right (changes yAxisX). Handle circles take priority over line hit-testing.
+
+🚧 SIGN: The detection bounding box (orange) defines WHERE to search for points. The axis handles (blue/green) define HOW to map pixel→data coordinates. These are two independent concepts — do not conflate them.
+
+🚧 SIGN: `DetectionBounds` is optional in the digitize API and in all `BaseDigitizer.digitize()` signatures. When absent, digitizers fall back to axis range + 10% padding. This preserves backward compatibility with all existing tests and the eval harness.
+
+🚧 SIGN: The zoom panel reads from the original-resolution image, not the scaled canvas. It uses `ctx.drawImage(image, srcX, srcY, srcSize, srcSize, 0, 0, ZOOM_SIZE, ZOOM_SIZE)` with `imageSmoothingEnabled = false` for pixel-precise magnification.

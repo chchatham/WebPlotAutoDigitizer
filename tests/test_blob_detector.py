@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 from backend.digitizers.blob_detector import BlobDetector
-from backend.models import AxisCalibration
+from backend.models import AxisCalibration, DetectionBounds
 from tests.eval_digitizer import score_predictions
 from tests.generate_plots import PlotConfig, generate_plot, FIXED_DPI, FIXED_FIGSIZE
 
@@ -117,3 +117,49 @@ def test_blob_detector_returns_detection_result(tmp_path: Path):
         assert hasattr(p, "x_pixel")
         assert hasattr(p, "y_pixel")
         assert 0.0 <= p.confidence <= 1.0
+
+
+def test_blob_detector_with_detection_bounds(tmp_path: Path):
+    cfg = PlotConfig(n_points=20, marker="o", marker_size="large", seed=42, label="blob_bounds")
+    out = generate_plot(cfg, tmp_path)
+
+    img = np.array(Image.open(out.image_path).convert("RGB"))
+    gt = json.loads(out.json_path.read_text())
+    cal = _make_calibration_from_gt(gt, img)
+
+    h, w = img.shape[:2]
+    bounds = DetectionBounds(
+        x_min_px=w * 0.05,
+        x_max_px=w * 0.95,
+        y_min_px=h * 0.05,
+        y_max_px=h * 0.95,
+    )
+
+    detector = BlobDetector()
+    result_with_bounds = detector.digitize(img, cal, bounds)
+    result_without = detector.digitize(img, cal)
+
+    assert len(result_with_bounds.points) >= len(result_without.points)
+
+
+def test_blob_detector_narrow_bounds_restricts(tmp_path: Path):
+    cfg = PlotConfig(n_points=20, marker="o", marker_size="large", seed=42, label="blob_narrow")
+    out = generate_plot(cfg, tmp_path)
+
+    img = np.array(Image.open(out.image_path).convert("RGB"))
+    gt = json.loads(out.json_path.read_text())
+    cal = _make_calibration_from_gt(gt, img)
+
+    h, w = img.shape[:2]
+    narrow = DetectionBounds(
+        x_min_px=w * 0.4,
+        x_max_px=w * 0.6,
+        y_min_px=h * 0.4,
+        y_max_px=h * 0.6,
+    )
+
+    detector = BlobDetector()
+    result_narrow = detector.digitize(img, cal, narrow)
+    result_full = detector.digitize(img, cal)
+
+    assert len(result_narrow.points) <= len(result_full.points)

@@ -1,10 +1,10 @@
 # WebPlotAutoDigitizer — Progress
 
 ## Last Updated
-Iteration 5 — Phase 10 refinements. 2026-05-04.
+Iteration 6 — Phase 11 implemented locally. 2026-05-04.
 
 ## Current Focus
-Phase 10 complete. Deploying to Railway for user testing.
+Phase 11 implemented: constrained axis handles (single DoF), precision zoom panel, detection bounding box. All 47 tests pass. Frontend builds. Ready to deploy to Railway.
 
 ## What Exists
 - **Backend** (5 endpoints): `/health`, `/api/upload`, `/api/image/{id}`, `/api/detect-axes`, `/api/digitize`
@@ -19,6 +19,14 @@ Phase 10 complete. Deploying to Railway for user testing.
 - **Live deployment**: https://webplotautodigitizer-production.up.railway.app
 - **Railway project**: https://railway.com/project/37e40b77-e1e3-4521-8b6c-2fb6a59bc2c7
 - **Project report**: `report.html` — also served as About page at `/about.html`
+
+## What Changed (Phase 11)
+1. **Constrained axis handles** — X handles (blue) only move horizontally. Y handles (green) only move vertically. Axes are always perfectly horizontal/vertical.
+2. **Axis line dragging** — Drag the X-axis line itself up/down to reposition its Y coordinate. Drag the Y-axis line left/right to reposition its X coordinate.
+3. **Precision zoom panel** — 200x200px zoom canvas at 8x magnification. Shows the area around the currently-dragged handle with crosshairs and label. Updates in real-time during drag.
+4. **Detection bounding box** — Orange dashed rectangle with 4 draggable corner handles. Defines the area where points are searched. Initialized to 5% padding beyond axis range. Sent as `detection_bounds` in the `/api/digitize` request.
+5. **Backend DetectionBounds** — New `DetectionBounds` dataclass. All 3 digitizers (blob, template, hybrid) accept optional `detection_bounds` parameter. When provided, used directly as ROI instead of axis range + 10% padding.
+6. **4 new tests** — `test_blob_detector_with_detection_bounds`, `test_blob_detector_narrow_bounds_restricts`, `test_digitize_with_detection_bounds`, `test_digitize_without_detection_bounds`.
 
 ## What Changed (Phase 10)
 1. **About page** — `report.html` copied to `frontend/public/about.html`, persistent nav bar with Digitizer/About tabs, About renders in iframe

@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 
 from backend.digitizers import BaseDigitizer
-from backend.models import AxisCalibration, DetectedPoint, DetectionResult
+from backend.models import AxisCalibration, DetectedPoint, DetectionBounds, DetectionResult
 
 
 def _make_circle_template(size: int) -> np.ndarray:
@@ -63,22 +63,37 @@ class TemplateMatcher(BaseDigitizer):
     def __init__(self, template_sizes: list[int] | None = None):
         self.template_sizes = template_sizes or [7, 11, 15, 21]
 
-    def digitize(self, image: np.ndarray, calibration: AxisCalibration) -> DetectionResult:
+    def digitize(
+        self,
+        image: np.ndarray,
+        calibration: AxisCalibration,
+        detection_bounds: DetectionBounds | None = None,
+    ) -> DetectionResult:
         t0 = time.perf_counter()
 
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
-        x_min_px = int(min(calibration.x_pixel_range))
-        x_max_px = int(max(calibration.x_pixel_range))
-        y_min_px = int(min(calibration.y_pixel_range))
-        y_max_px = int(max(calibration.y_pixel_range))
+        if detection_bounds:
+            x_min_px = int(detection_bounds.x_min_px)
+            x_max_px = int(detection_bounds.x_max_px)
+            y_min_px = int(detection_bounds.y_min_px)
+            y_max_px = int(detection_bounds.y_max_px)
+        else:
+            x_min_px = int(min(calibration.x_pixel_range))
+            x_max_px = int(max(calibration.x_pixel_range))
+            y_min_px = int(min(calibration.y_pixel_range))
+            y_max_px = int(max(calibration.y_pixel_range))
+            x_pad = int((x_max_px - x_min_px) * 0.10)
+            y_pad = int((y_max_px - y_min_px) * 0.10)
+            x_min_px = max(0, x_min_px - x_pad)
+            x_max_px = min(gray.shape[1] - 1, x_max_px + x_pad)
+            y_min_px = max(0, y_min_px - y_pad)
+            y_max_px = min(gray.shape[0] - 1, y_max_px + y_pad)
 
-        x_pad = int((x_max_px - x_min_px) * 0.10)
-        y_pad = int((y_max_px - y_min_px) * 0.10)
-        x_min_px = max(0, x_min_px - x_pad)
-        x_max_px = min(gray.shape[1] - 1, x_max_px + x_pad)
-        y_min_px = max(0, y_min_px - y_pad)
-        y_max_px = min(gray.shape[0] - 1, y_max_px + y_pad)
+        x_min_px = max(0, x_min_px)
+        x_max_px = min(gray.shape[1] - 1, x_max_px)
+        y_min_px = max(0, y_min_px)
+        y_max_px = min(gray.shape[0] - 1, y_max_px)
 
         roi = gray[y_min_px:y_max_px, x_min_px:x_max_px]
         roi_h, roi_w = roi.shape

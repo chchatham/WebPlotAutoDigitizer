@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from backend.axis_detection import detect_axes
 from backend.digitizers.hybrid import HybridDigitizer
 from backend.image_utils import save_upload, load_image, UPLOAD_DIR, ImageValidationError
-from backend.models import AxisCalibration, UploadResponse, HealthResponse
+from backend.models import AxisCalibration, DetectionBounds, UploadResponse, HealthResponse
 
 app = FastAPI(title="WebPlotAutoDigitizer")
 
@@ -87,6 +87,7 @@ async def detect_axes_endpoint(request: DetectAxesRequest):
 class DigitizeRequest(BaseModel):
     image_id: str
     calibration: dict
+    detection_bounds: dict | None = None
 
 
 @app.post("/api/digitize")
@@ -103,8 +104,17 @@ async def digitize_endpoint(request: DigitizeRequest):
         y_data_range=tuple(request.calibration["y_data_range"]),
     )
 
+    bounds = None
+    if request.detection_bounds:
+        bounds = DetectionBounds(
+            x_min_px=request.detection_bounds["x_min"],
+            x_max_px=request.detection_bounds["x_max"],
+            y_min_px=request.detection_bounds["y_min"],
+            y_max_px=request.detection_bounds["y_max"],
+        )
+
     digitizer = HybridDigitizer()
-    result = digitizer.digitize(image, cal)
+    result = digitizer.digitize(image, cal, bounds)
 
     return {
         "points": [

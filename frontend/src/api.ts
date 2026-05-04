@@ -26,6 +26,7 @@ export interface Calibration {
   y_pixel_range: [number, number];
   x_data_range: [number, number];
   y_data_range: [number, number];
+  detection_bounds?: { x_min: number; x_max: number; y_min: number; y_max: number };
 }
 
 export interface DetectAxesResponse {
@@ -61,10 +62,11 @@ export interface DigitizeResponse {
 }
 
 export async function digitize(imageId: string, calibration: Calibration): Promise<DigitizeResponse> {
+  const { detection_bounds, ...cal } = calibration;
   const res = await fetch(`${API_BASE}/api/digitize`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ image_id: imageId, calibration }),
+    body: JSON.stringify({ image_id: imageId, calibration: cal, detection_bounds: detection_bounds ?? null }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
