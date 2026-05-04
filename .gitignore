@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Uploads
+/uploads/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Ralph working files
+.ralph/errors.log
+
+# Test fixtures (generated, large)
+tests/fixtures/*.png
+
+# Environment
+.env
+.env.local
+.claude/

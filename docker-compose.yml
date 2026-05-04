@@ -1,0 +1,12 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - upload_data:/tmp/webplotdigitizer_uploads
+
+volumes:
+  upload_data:

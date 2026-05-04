@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from backend.axis_detection import detect_axes
+from backend.digitizers.hybrid import HybridDigitizer
+from backend.image_utils import save_upload, load_image, UPLOAD_DIR, ImageValidationError
+from backend.models import AxisCalibration, UploadResponse, HealthResponse
+
+app = FastAPI(title="WebPlotAutoDigitizer")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+STATIC_DIR = Path(__file__).parent.parent / "static"
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health():
+    return HealthResponse(status="ok")
+
+
+@app.post("/api/upload", response_model=UploadResponse)
+async def upload_image(file: UploadFile = File(...)):
+    data = await file.read()
+    try:
+        image_id, width, height = save_upload(data, file.filename or "upload.png")
+    except ImageValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return UploadResponse(
+        image_id=image_id,
+        width=width,
+        height=height,
+        filename=file.filename or "upload.png",
+    )
+
+
+@app.get("/api/image/{image_id}")
+async def get_image(image_id: str):
+    path = UPLOAD_DIR / f"{image_id}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(path, media_type="image/png")
+
+
+class DetectAxesRequest(BaseModel):
+    image_id: str
+
+
+class DetectAxesResponse(BaseModel):
+    axes: dict
+    confidence: float
+
+
+@app.post("/api/detect-axes", response_model=DetectAxesResponse)
+async def detect_axes_endpoint(request: DetectAxesRequest):
+    try:
+        image = load_image(request.image_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    result = detect_axes(image)
+    cal = result.calibration
+
+    return DetectAxesResponse(
+        axes={
+            "x_pixel_range": list(cal.x_pixel_range),
+            "y_pixel_range": list(cal.y_pixel_range),
+            "x_data_range": list(cal.x_data_range),
+            "y_data_range": list(cal.y_data_range),
+        },
+        confidence=result.confidence,
+    )
+
+
+class DigitizeRequest(BaseModel):
+    image_id: str
+    calibration: dict
+
+
+@app.post("/api/digitize")
+async def digitize_endpoint(request: DigitizeRequest):
+    try:
+        image = load_image(request.image_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    cal = AxisCalibration(
+        x_pixel_range=tuple(request.calibration["x_pixel_range"]),
+        y_pixel_range=tuple(request.calibration["y_pixel_range"]),
+        x_data_range=tuple(request.calibration["x_data_range"]),
+        y_data_range=tuple(request.calibration["y_data_range"]),
+    )
+
+    digitizer = HybridDigitizer()
+    result = digitizer.digitize(image, cal)
+
+    return {
+        "points": [
+            {
+                "x_data": p.x_data,
+                "y_data": p.y_data,
+                "x_pixel": p.x_pixel,
+                "y_pixel": p.y_pixel,
+                "confidence": p.confidence,
+            }
+            for p in result.points
+        ],
+        "method": result.method,
+        "elapsed_ms": result.elapsed_ms,
+    }
+
+
+if STATIC_DIR.exists():
+    @app.get("/{path:path}")
+    async def serve_spa(path: str):
+        file_path = STATIC_DIR / path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(STATIC_DIR / "index.html")

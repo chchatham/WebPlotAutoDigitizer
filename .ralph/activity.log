@@ -1,0 +1,8 @@
+# WebPlotAutoDigitizer — Activity Log
+
+## Iteration 0 — Project initialized
+- Created .ralph/ state files
+- Created CLAUDE.md with architecture, schemas, and design principles
+- Task anchor defines 8 phases, ~40 checkboxes
+- Strategy: test harness first, then iterate on digitization methods with empirical comparison
+- No code written yet. Next: Phase 0 scaffolding.
