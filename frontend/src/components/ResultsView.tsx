@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 import { digitize, getImageUrl, type Calibration, type UploadResponse, type DigitizeResponse } from "../api";
 import CsvExport from "./CsvExport";
 
@@ -14,7 +14,7 @@ export default function ResultsView({ upload, calibration, onBack, onReset }: Pr
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const imageRef = useRef<HTMLImageElement | null>(null);
+  const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [scale, setScale] = useState(1);
 
   useEffect(() => {
@@ -29,22 +29,21 @@ export default function ResultsView({ upload, calibration, onBack, onReset }: Pr
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
-      imageRef.current = img;
+      setImage(img);
       setScale(Math.min(1, 760 / img.width));
     };
     img.src = getImageUrl(upload.image_id);
   }, [upload.image_id]);
 
-  const draw = useCallback(() => {
+  useEffect(() => {
     const canvas = canvasRef.current;
-    const img = imageRef.current;
-    if (!canvas || !img || !result) return;
+    if (!canvas || !image || !result) return;
 
     const ctx = canvas.getContext("2d")!;
-    canvas.width = img.width * scale;
-    canvas.height = img.height * scale;
+    canvas.width = image.width * scale;
+    canvas.height = image.height * scale;
 
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
     for (const pt of result.points) {
       const x = pt.x_pixel * scale;
@@ -58,11 +57,7 @@ export default function ResultsView({ upload, calibration, onBack, onReset }: Pr
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
-  }, [result, scale]);
-
-  useEffect(() => {
-    draw();
-  }, [draw]);
+  }, [image, result, scale]);
 
   if (loading) return <p>Digitizing...</p>;
   if (error) return <p style={{ color: "#dc2626" }}>Error: {error}</p>;

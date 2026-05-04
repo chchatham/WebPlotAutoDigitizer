@@ -1,7 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { detectAxes, type Calibration, type UploadResponse } from "../api";
-
-const API_BASE = import.meta.env.VITE_API_URL ?? "";
+import { detectAxes, getImageUrl, type Calibration, type UploadResponse } from "../api";
 
 interface Props {
   upload: UploadResponse;
@@ -17,7 +15,7 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState<Handle | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const imageRef = useRef<HTMLImageElement | null>(null);
+  const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [scale, setScale] = useState(1);
 
   const [xMinVal, setXMinVal] = useState("0");
@@ -41,18 +39,17 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
 
   useEffect(() => {
     const img = new Image();
+    img.crossOrigin = "anonymous";
     img.onload = () => {
-      imageRef.current = img;
+      setImage(img);
       const maxWidth = 760;
-      const s = Math.min(1, maxWidth / img.width);
-      setScale(s);
+      setScale(Math.min(1, maxWidth / img.width));
     };
-    img.src = `${API_BASE}/api/image/${upload.image_id}`;
     img.onerror = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = upload.width;
-      canvas.height = upload.height;
-      const ctx = canvas.getContext("2d")!;
+      const fallbackCanvas = document.createElement("canvas");
+      fallbackCanvas.width = upload.width;
+      fallbackCanvas.height = upload.height;
+      const ctx = fallbackCanvas.getContext("2d")!;
       ctx.fillStyle = "#e5e7eb";
       ctx.fillRect(0, 0, upload.width, upload.height);
       ctx.fillStyle = "#6b7280";
@@ -60,25 +57,24 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
       ctx.textAlign = "center";
       ctx.fillText("Image preview unavailable", upload.width / 2, upload.height / 2);
       const fallback = new Image();
-      fallback.src = canvas.toDataURL();
+      fallback.src = fallbackCanvas.toDataURL();
       fallback.onload = () => {
-        imageRef.current = fallback;
-        const maxWidth = 760;
-        setScale(Math.min(1, maxWidth / upload.width));
+        setImage(fallback);
+        setScale(Math.min(1, 760 / upload.width));
       };
     };
+    img.src = getImageUrl(upload.image_id);
   }, [upload]);
 
-  const draw = useCallback(() => {
+  useEffect(() => {
     const canvas = canvasRef.current;
-    const img = imageRef.current;
-    if (!canvas || !img || !calibration) return;
+    if (!canvas || !image || !calibration) return;
 
     const ctx = canvas.getContext("2d")!;
-    canvas.width = img.width * scale;
-    canvas.height = img.height * scale;
+    canvas.width = image.width * scale;
+    canvas.height = image.height * scale;
 
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
     const [xMinPx, xMaxPx] = calibration.x_pixel_range;
     const [yMinPx, yMaxPx] = calibration.y_pixel_range;
@@ -117,11 +113,7 @@ export default function AxisCalibrationView({ upload, onCalibrated, onBack }: Pr
       ctx.lineWidth = 2;
       ctx.stroke();
     }
-  }, [calibration, scale, dragging]);
-
-  useEffect(() => {
-    draw();
-  }, [draw]);
+  }, [image, calibration, scale, dragging]);
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
