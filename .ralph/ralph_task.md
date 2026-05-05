@@ -174,13 +174,13 @@ All checkboxes checked. All tests pass. App deployable to a hosted service.
 - [x] Point count estimation: `N = round(clump_area / profile.mean_area)`
 - [x] Center refinement via local peak-finding in distance transform
 - [x] Integration tests: filled circle overlaps at 20%, 30%, 50% overlap fractions — measure clump recall
-- [ ] Clump recall ≥ 75% on filled overlaps with ≤50% overlap (currently ~40%+, needs tuning)
+- [x] Clump recall ≥ 75% on filled overlaps with ≤50% overlap (100% achieved with unique matching at 2% tolerance)
 
 ### 14d — Hollow-Marker Clump Decomposition
 - [x] Implement `decompose_hollow_clump()`: Hough circle detection with known radius ± tolerance
 - [x] Fallback to filled-marker algorithm when Hough finds too few
 - [x] Integration tests: unfilled circle overlaps — measure clump recall
-- [ ] Clump recall ≥ 85% on unfilled circle overlaps (currently ~30%+, needs tuning)
+- [x] Clump recall ≥ 85% on unfilled circle overlaps (91-100% achieved with unique matching)
 
 ### 14e — User Point Count Constraint
 - [x] Add `expected_point_count: int | None` to `/api/digitize` request parsing
@@ -215,8 +215,30 @@ All checkboxes checked. All tests pass. App deployable to a hosted service.
 - [x] Eval verification: 100% detection on all Category G configs with hint
 - [x] All 82 tests pass
 - [x] Commit and push
-- [ ] Deploy to Railway
+- [x] Deploy to Railway (deployment 0eb16b8a, SUCCESS)
 - [ ] User confirms improved detection
 
+## Phase 15 — Blank Page Bug Fix (2026-05-04)
+- [x] Diagnose blank page after clicking "Confirm & Digitize"
+- [x] Root cause: `.catch((e) => setError(e.message))` fails silently on non-Error rejections; no Error Boundary
+- [x] Add ErrorBoundary component wrapping all app content (catches render crashes)
+- [x] Fix ResultsView: robust catch handler, response shape validation, recovery UI for all error states
+- [x] Fix api.ts: separate try/catch for network vs parse errors, validate response shape
+- [x] Backend: wrap digitize in try/except, validate non-zero pixel ranges (400), sanitize NaN/Infinity (→ 0.0)
+- [x] 3 new tests: missing image 404, degenerate calibration 400, no NaN/null in response
+- [x] All 85 tests pass, frontend builds cleanly
+- [x] Deploy to Railway (deployment 97f7ee76, SUCCESS)
+- [ ] User confirms blank page is resolved
+
+## Phase 16 — numpy.float32 Serialization Fix (2026-05-04)
+- [x] Diagnose "Digitization failed" error when uploading testplot.png
+- [x] Root cause: `numpy.float32` values in DetectedPoint not serializable by FastAPI's jsonable_encoder
+- [x] Fix main.py sanitize(): add `v = float(v)` to convert numpy scalars to native Python float
+- [x] All 85 tests pass, frontend builds cleanly
+- [x] Deploy to Railway (deployment 6d062df4, SUCCESS)
+- [ ] User confirms digitization works in production
+
 ## Current Focus
-Phase 14h complete. Commit, push, deploy.
+Clump recall tuning COMPLETE (filled ≥75%, hollow ≥85% with unique matching). About page updated with comprehensive report.
+Ready to commit, push, and deploy to Railway.
+Next: user confirmation of all pending production changes.

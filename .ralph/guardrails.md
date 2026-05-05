@@ -156,3 +156,23 @@ Format: 🚧 SIGN: description
 🚧 SIGN: The blob detector's distance-transform peak threshold should try multiple values (0.35, 0.25, 0.18) rather than a single 0.4. A 2-point overlap with ~30% overlap has a gentle plateau in the distance transform — the 0.4 threshold fails to split it into 2 peaks.
 
 🚧 SIGN: The `BaseDigitizer` abstract interface is NOT changed. `expected_point_count` is added as an optional keyword argument (default None) on concrete implementations. This preserves backward compatibility with existing tests and the eval harness.
+
+## Error Handling Guardrails (added Blank Page Fix)
+
+🚧 SIGN: The React app MUST have an Error Boundary wrapping all dynamic content. Without it, any unhandled render exception (e.g., calling .toFixed() on undefined) blanks the entire page with no recovery UI. The ErrorBoundary component in `components/ErrorBoundary.tsx` provides a "Start over" button.
+
+🚧 SIGN: Promise `.catch()` handlers must NEVER assume `e` has a `.message` property. Use `e instanceof Error ? e.message : String(e ?? "Unknown error")` to handle non-Error rejections. Calling `setError(undefined)` (from `e.message` on a non-Error) sets a falsy error → component shows blank instead of error UI.
+
+🚧 SIGN: The `/api/digitize` endpoint MUST wrap `digitizer.digitize()` in try/except and sanitize all numeric output with `math.isnan()`/`math.isinf()` checks. Python's json.dumps serializes NaN/Infinity as `NaN`/`Infinity` literals which are INVALID JSON — JavaScript's JSON.parse will throw, causing a parse error that may not propagate clearly to the user.
+
+🚧 SIGN: The `/api/digitize` endpoint MUST validate that `x_pixel_range` and `y_pixel_range` have non-zero width before calling `pixel_to_data()`. Zero-width ranges cause ZeroDivisionError in the calibration math, which previously returned as an unhandled 500.
+
+## Test Calibration Guardrails (added Clump Recall Tuning)
+
+🚧 SIGN: Test helper `_make_calibration_from_gt()` must use `y_pixel_range=(h * 0.89, h * 0.12)`, NOT `(h * 0.88, h * 0.11)`. matplotlib's `subplot_adjust(bottom=0.11, top=0.88)` maps to pixel coordinates `((1-bottom)*h, (1-top)*h) = (0.89*h, 0.12*h)`. The complement formula is critical — using the raw subplot params directly causes a 9-pixel systematic Y offset that inflates positional error and deflates recall scores.
+
+🚧 SIGN: When evaluating clump decomposition recall, use `unique_matching=True` in `score_predictions()`. Without it, the KDTree scorer allows multiple truth points to match the same predicted point, inflating recall to 100% even when clumps are not decomposed at all. Unique matching uses greedy assignment sorted by distance.
+
+## Serialization Guardrails (added Phase 16)
+
+🚧 SIGN: All numeric values returned from `/api/digitize` MUST be cast to native Python `float` before returning. OpenCV and numpy operations produce `numpy.float32`/`numpy.float64` scalar types. FastAPI's `jsonable_encoder` cannot serialize these — it throws `TypeError("'numpy.float32' object is not iterable")` which becomes a silent 500. The `sanitize()` function in `main.py` must call `float(v)` before any other checks. This applies to any new endpoint that returns values derived from numpy/OpenCV computations.

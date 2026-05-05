@@ -268,12 +268,15 @@
             <li><a href="#overview">Project Overview</a></li>
             <li><a href="#how-it-works">How It Works</a></li>
             <li><a href="#architecture">Architecture &amp; Tech Stack</a></li>
-            <li><a href="#methods">Digitization Methods &amp; What We Learned</a></li>
+            <li><a href="#methods">Digitization Methods</a></li>
+            <li><a href="#clumps">Shape-Aware Clump Decomposition</a></li>
+            <li><a href="#calibration-ui">Calibration UI</a></li>
             <li><a href="#testing">Test Harness &amp; Evaluation</a></li>
-            <li><a href="#frontend">Frontend UI</a></li>
+            <li><a href="#error-handling">Error Handling &amp; Robustness</a></li>
             <li><a href="#access">How to Access &amp; Deploy</a></li>
             <li><a href="#known-issues">Known Limitations</a></li>
             <li><a href="#decisions">Key Design Decisions</a></li>
+            <li><a href="#timeline">Project Timeline</a></li>
         </ol>
     </div>
 
@@ -288,20 +291,29 @@
             <div class="label">Mean detection rate</div>
         </div>
         <div class="stat">
-            <div class="value">35</div>
+            <div class="value">85</div>
             <div class="label">Passing tests</div>
         </div>
         <div class="stat">
-            <div class="value">55</div>
+            <div class="value">98</div>
             <div class="label">Eval test plots</div>
         </div>
         <div class="stat">
             <div class="value">&lt;10s</div>
             <div class="label">Response time</div>
         </div>
+        <div class="stat">
+            <div class="value">100%</div>
+            <div class="label">Clump recall (filled)</div>
+        </div>
     </div>
 
-    <p>The project was built across 8 phases, starting from a synthetic test harness (so we could measure accuracy before writing any detection code) through to a fully deployed Docker container serving both the API and the React frontend.</p>
+    <p>The project was built across 16 phases, starting from a synthetic test harness (so we could measure accuracy before writing any detection code) through shape-aware clump decomposition, a precision calibration UI, and production deployment on Railway.</p>
+
+    <div class="highlight">
+        <p><strong>Live deployment:</strong> <a href="https://webplotautodigitizer-production.up.railway.app" style="color: var(--blue);">https://webplotautodigitizer-production.up.railway.app</a></p>
+        <p><strong>Source code:</strong> <a href="https://github.com/chchatham/WebPlotAutoDigitizer" style="color: var(--blue);">github.com/chchatham/WebPlotAutoDigitizer</a></p>
+    </div>
 
     <!-- ======================================= -->
     <h2 id="how-it-works">2. How It Works</h2>
@@ -322,41 +334,46 @@
     <p>The user uploads a scatterplot image (PNG, JPG, or WEBP). The backend validates it (max 10MB, max 4000&times;4000 pixels), converts it to RGB, and stores it with a unique ID.</p>
 
     <h3>Step 2: Axis Detection</h3>
-    <p>The system auto-detects the plot region using Canny edge detection and Hough line transform. It identifies horizontal and vertical axis lines, computes the plot bounding box, and optionally uses OCR (pytesseract) to read tick labels and determine the data range.</p>
+    <p>The system auto-detects the plot region using a dual-strategy approach: background-color detection (for ggplot2/seaborn-style plots with gray backgrounds) combined with Canny edge detection and Hough line transform. It identifies horizontal and vertical axis lines, computes the plot bounding box using whichever method returns the larger area, and optionally uses OCR (pytesseract) to read tick labels and determine the data range.</p>
 
     <h3>Step 3: User Calibration</h3>
-    <p>The detected axes are shown as a canvas overlay with draggable blue handles at the axis endpoints. The user adjusts these handles to precisely align with the actual axis lines and enters the min/max data values for each axis. This step is critical &mdash; auto-detection is a starting suggestion, but the user's corrections are the source of truth.</p>
+    <p>The detected axes are shown as a canvas overlay with independent draggable handles: blue handles for the X-axis (horizontal movement repositions the handle, vertical movement translates both handles together) and green handles for the Y-axis (vertical to reposition, horizontal to translate). The axis lines themselves are also draggable. An 8&times; magnified zoom panel tracks the active handle for pixel-precise placement. An orange detection bounding box defines where to search for points, and four numeric inputs let the user enter the data ranges. An optional "Expected number of points" field guides the clump decomposition algorithm.</p>
+    <p>If the user clicks "Adjust calibration" from the results screen, all handle positions, data ranges, and the bounding box are restored from the previous calibration &mdash; the system never re-runs axis detection and discards the user's work.</p>
 
     <h3>Step 4: Digitization</h3>
-    <p>The confirmed calibration is sent to the backend, which runs the HybridDigitizer. This combines blob detection (fast, ~1ms) with template matching (thorough, handles all marker shapes) and uses an agreement-based confidence comparison to select the best result. Each detected point gets data coordinates computed via the calibration transform.</p>
+    <p>The confirmed calibration is sent to the backend, which runs the HybridDigitizer. This combines blob detection (fast, ~1ms) with template matching (thorough, handles all marker shapes) and shape-aware clump decomposition (for overlapping markers). It uses an agreement-based confidence comparison to select the best result, and each detected point gets data coordinates computed via the calibration transform. All numeric values are sanitized (NaN/Infinity converted to 0.0, numpy scalars cast to native Python float) before serialization.</p>
 
     <h3>Step 5: Export</h3>
-    <p>Results are displayed as red circles overlaid on the original image, plus a data table showing X, Y, and confidence for each point. The user can copy the CSV to clipboard or download it as a file.</p>
+    <p>Results are displayed as translucent red circles overlaid on the original image (max opacity ~0.225 so original markers show through), plus a data table showing X, Y, and confidence for each point. The user can copy the CSV to clipboard or download it as a file, then go back to adjust calibration or start over.</p>
 
     <!-- ======================================= -->
     <h2 id="architecture">3. Architecture &amp; Tech Stack</h2>
 
-    <h3>Backend (Python / FastAPI)</h3>
+    <h3>Backend (Python 3.11+ / FastAPI)</h3>
     <div class="card">
         <h4>Key files:</h4>
         <ul>
-            <li><code>backend/main.py</code> &mdash; FastAPI app with 5 endpoints + SPA static serving</li>
-            <li><code>backend/models.py</code> &mdash; Pydantic models and dataclasses (AxisCalibration, DetectionResult, etc.)</li>
-            <li><code>backend/axis_detection.py</code> &mdash; Hough-line axis detection + OCR label reading</li>
+            <li><code>backend/main.py</code> &mdash; FastAPI app with 5 endpoints + SPA static serving + response sanitization</li>
+            <li><code>backend/models.py</code> &mdash; Pydantic models and dataclasses (AxisCalibration, DetectionResult, MarkerProfile, DetectionBounds, etc.)</li>
+            <li><code>backend/axis_detection.py</code> &mdash; Dual-strategy axis detection: background-color bbox (ggplot) + Hough lines (matplotlib)</li>
             <li><code>backend/calibration.py</code> &mdash; Pixel &harr; data coordinate transform</li>
-            <li><code>backend/digitizers/</code> &mdash; Three detection methods implementing BaseDigitizer ABC</li>
+            <li><code>backend/digitizers/blob_detector.py</code> &mdash; Method A: fast contour/blob detection with watershed splitting</li>
+            <li><code>backend/digitizers/template_matcher.py</code> &mdash; Method B: multi-scale template cross-correlation</li>
+            <li><code>backend/digitizers/hybrid.py</code> &mdash; Method C (production): agreement-based method selection + shape-aware routing</li>
+            <li><code>backend/digitizers/shape_aware.py</code> &mdash; Method D: marker profile estimation + clump decomposition</li>
             <li><code>backend/image_utils.py</code> &mdash; Image normalization, validation, upload handling</li>
         </ul>
     </div>
 
-    <h3>Frontend (React / TypeScript / Vite)</h3>
+    <h3>Frontend (React 18 / TypeScript / Vite)</h3>
     <div class="card">
         <h4>Key components:</h4>
         <ul>
             <li><code>ImageUpload.tsx</code> &mdash; Drag-and-drop file picker with validation</li>
-            <li><code>AxisCalibration.tsx</code> &mdash; Canvas overlay with draggable fiducial handles + numeric inputs</li>
-            <li><code>ResultsView.tsx</code> &mdash; Point overlay on image + scrollable data table</li>
+            <li><code>AxisCalibration.tsx</code> &mdash; Canvas overlay with independent axis handles, zoom panel, detection bounding box, and expected-point-count input</li>
+            <li><code>ResultsView.tsx</code> &mdash; Translucent point overlay on image + scrollable data table with robust error recovery</li>
             <li><code>CsvExport.tsx</code> &mdash; Copy-to-clipboard and download buttons</li>
+            <li><code>ErrorBoundary.tsx</code> &mdash; Catches render crashes and provides "Start over" recovery UI</li>
         </ul>
     </div>
 
@@ -378,7 +395,7 @@
             <tr>
                 <td><code>/api/upload</code></td>
                 <td>POST</td>
-                <td>Upload image (multipart form)</td>
+                <td>Upload image (multipart form, max 10MB)</td>
             </tr>
             <tr>
                 <td><code>/api/image/{id}</code></td>
@@ -388,12 +405,12 @@
             <tr>
                 <td><code>/api/detect-axes</code></td>
                 <td>POST</td>
-                <td>Auto-detect axis bounding box</td>
+                <td>Auto-detect axis bounding box (dual-strategy)</td>
             </tr>
             <tr>
                 <td><code>/api/digitize</code></td>
                 <td>POST</td>
-                <td>Extract data points from image</td>
+                <td>Extract data points; accepts optional <code>detection_bounds</code> and <code>expected_point_count</code></td>
             </tr>
         </tbody>
     </table>
@@ -405,34 +422,34 @@
         </thead>
         <tbody>
             <tr><td>FastAPI + Uvicorn</td><td>Async web framework &amp; ASGI server</td></tr>
-            <tr><td>OpenCV (headless)</td><td>Image processing, contour detection, template matching</td></tr>
-            <tr><td>NumPy / SciPy</td><td>Coordinate math, KDTree for eval matching</td></tr>
+            <tr><td>OpenCV (headless)</td><td>Image processing, contour/Hough detection, template matching, distance transforms</td></tr>
+            <tr><td>NumPy / SciPy</td><td>Coordinate math, KDTree for eval/NMS, distance transforms</td></tr>
             <tr><td>scikit-image</td><td>Additional image processing utilities</td></tr>
             <tr><td>Pillow</td><td>Image format handling and validation</td></tr>
-            <tr><td>pytesseract</td><td>OCR for axis label reading (optional)</td></tr>
+            <tr><td>pytesseract</td><td>OCR for axis label reading (optional; fails on many real-world plots)</td></tr>
             <tr><td>matplotlib</td><td>Test-only: synthetic plot generation</td></tr>
             <tr><td>React 18 + Vite</td><td>Frontend UI framework &amp; build tool</td></tr>
         </tbody>
     </table>
 
     <!-- ======================================= -->
-    <h2 id="methods">4. Digitization Methods &amp; What We Learned</h2>
+    <h2 id="methods">4. Digitization Methods</h2>
 
-    <p>We implemented three detection methods and compared them empirically across 55 synthetic test plots spanning different marker shapes, sizes, opacities, backgrounds, and grid settings.</p>
+    <p>We implemented four detection methods and compared them empirically across 98 synthetic test plots spanning different marker shapes, sizes, opacities, backgrounds, grid settings, overlap levels, and fill styles.</p>
 
     <h3>Method A: Blob Detection</h3>
     <div class="card">
         <h4>How it works</h4>
-        <p>Converts the plot region to grayscale, applies adaptive thresholding relative to the background median, then uses morphological operations and contour detection to find marker blobs. Computes centroids via image moments and derives a circularity-based confidence score.</p>
+        <p>Converts the plot region to grayscale, applies adaptive thresholding relative to the background median, then uses morphological operations and contour detection to find marker blobs. Merged contours (area &gt;1.3&times; median or elongation &gt;1.4) are split via distance-transform watershed with progressive peak thresholds (0.35, 0.25, 0.18). Computes centroids via image moments and derives a circularity-based confidence score.</p>
         <h4>Strengths</h4>
         <ul>
             <li>Extremely fast (~1ms per image)</li>
             <li>High accuracy on circles, squares, and diamonds (95%+ detection)</li>
-            <li>Simple, robust to varying marker sizes</li>
+            <li>Built-in watershed splitting for overlapping markers</li>
         </ul>
         <h4>Weaknesses</h4>
         <ul>
-            <li>Fails completely on triangle markers (0% &mdash; triangles don't form solid blobs after thresholding)</li>
+            <li>Fails on triangle markers (0% &mdash; triangles don't form solid blobs after thresholding)</li>
             <li>Struggles with X-shaped markers (thin cross shapes)</li>
             <li>Confused by grid line intersections</li>
         </ul>
@@ -458,19 +475,19 @@
         <p><span class="badge badge-blue">Mean: 78.5%</span> <span class="badge badge-amber">Speed: 300-4000ms</span></p>
     </div>
 
-    <h3>Method C: Hybrid (Production)</h3>
+    <h3>Method C: Hybrid (Production Router)</h3>
     <div class="card">
         <h4>How it works</h4>
-        <p>Always runs both blob and template detection, then makes an intelligent selection:</p>
+        <p>The production digitizer combines all other methods via intelligent routing:</p>
         <ol>
-            <li>If one method finds no points, use the other</li>
-            <li>Compute agreement: what fraction of blob points have a nearby template match (within 2% of axis range)?</li>
-            <li>If agreement &ge;50%: methods agree on locations &mdash; pick whichever has higher average confidence</li>
-            <li>If agreement &lt;50%: methods disagree &mdash; prefer template (handles non-standard markers better) unless blob confidence is significantly higher</li>
+            <li>Always runs blob detection first (fast baseline)</li>
+            <li>Checks for significant clumping: &gt;5% of contour area in merged blobs, or user provided an expected point count</li>
+            <li>If clumps detected: runs ShapeAwareDetector (Method D) and compares &mdash; prefers shape-aware if it finds more points with reasonable confidence</li>
+            <li>Otherwise: runs template matching and computes agreement with blob results</li>
+            <li>If agreement &ge;50%: pick whichever method has higher average confidence</li>
+            <li>If agreement &lt;50%: prefer template unless blob confidence is significantly higher</li>
             <li>Fallback: merge both point sets with deduplication</li>
         </ol>
-        <h4>Why this works</h4>
-        <p>Blob detection is fast and precise on standard markers. Template matching is slow but comprehensive. By running both and comparing agreement/confidence, the hybrid gets the best of both worlds: it uses blob's precision when it's reliable, and template's coverage when the markers are unusual.</p>
         <p><span class="badge badge-green">Mean: 91.9%</span> <span class="badge badge-green">Median: 95%</span></p>
     </div>
 
@@ -511,11 +528,102 @@
                 <td>All shapes</td>
                 <td>Triangle+grid (0%)</td>
             </tr>
+            <tr>
+                <td>D: Shape-Aware</td>
+                <td>Additive</td>
+                <td>&mdash;</td>
+                <td>5&ndash;50ms</td>
+                <td>Overlapping/clumped markers</td>
+                <td>Requires 3+ singletons</td>
+            </tr>
         </tbody>
     </table>
 
     <!-- ======================================= -->
-    <h2 id="testing">5. Test Harness &amp; Evaluation</h2>
+    <h2 id="clumps">5. Shape-Aware Clump Decomposition</h2>
+
+    <p>Real-world scatterplots frequently have overlapping or touching markers. A naive blob detector sees merged markers as a single large contour and reports one point where there are two or more. Phase 14 added a four-stage pipeline to handle this.</p>
+
+    <h3>Stage 1: Marker Profile Estimation</h3>
+    <div class="card">
+        <p>Before decomposing clumps, the system learns what a single marker looks like by analyzing isolated singletons in the image:</p>
+        <ul>
+            <li>Finds all contours, filters by area (0.005%&ndash;2% of ROI), computes median area</li>
+            <li>Identifies singletons: contours within [0.4x, 1.8x] median area</li>
+            <li>Filters for isolation: removes contours with neighbors within 2.5x median radius (KDTree)</li>
+            <li>Computes profile: median radius, area, circularity, fill ratio</li>
+            <li>Hollow detection: fill_ratio &lt; 0.7 means unfilled/hollow markers</li>
+            <li>Requires minimum 3 singletons; falls back to standard blob detection if insufficient</li>
+        </ul>
+        <p>Output: <code>MarkerProfile(mean_radius_px, std_radius_px, mean_area_px, is_hollow, edge_width_px, circularity, fill_ratio, n_singletons)</code></p>
+    </div>
+
+    <h3>Stage 2: Clump Classification</h3>
+    <div class="card">
+        <p>Each contour is classified as a singleton or clump based on:</p>
+        <ul>
+            <li><strong>Area threshold:</strong> contour area &gt; 1.15&times; (with hint) or 1.3&times; (without hint) the marker profile's mean area</li>
+            <li><strong>Elongation:</strong> bounding box aspect ratio &gt; 1.3 AND area &gt; mean area (catches peanut-shaped 2-point overlaps)</li>
+        </ul>
+    </div>
+
+    <h3>Stage 3: Filled-Marker Decomposition</h3>
+    <div class="card">
+        <p>For filled markers, multiple strategies compete to find the best centroid placement:</p>
+        <ol>
+            <li><strong>Erosion split:</strong> progressively erodes the clump mask until it separates into N components; most accurate centroids when it works</li>
+            <li><strong>Ellipse-based placement:</strong> fits an ellipse to the contour, distributes N points along the major axis at geometrically correct spacing (<code>half_len = major/2 - radius</code>), then refines each point by finding the local distance-transform maximum</li>
+            <li><strong>Distance-transform NMS:</strong> computes the distance transform, finds local maxima with non-maximum suppression at 0.6&times; radius spacing, tries multiple threshold fractions (0.1&ndash;0.5)</li>
+            <li><strong>Label-based decomposition:</strong> thresholds the distance transform at progressively lower values, labels connected components, computes their centroids</li>
+            <li><strong>Skeleton spacing:</strong> for large clumps (3+ points), distributes points evenly along the morphological skeleton</li>
+        </ol>
+        <p>The strategy producing the count closest to the estimated N wins. The DT refinement step uses mutual exclusion: after placing a point, the distance transform is suppressed around it so the next point can't collapse to the same peak.</p>
+        <p><span class="badge badge-green">Clump recall: 100% at 2% tolerance (filled, &le;50% overlap)</span></p>
+    </div>
+
+    <h3>Stage 4: Hollow-Marker Decomposition</h3>
+    <div class="card">
+        <p>For hollow/unfilled markers, Hough Circle Detection is preferred since the circular edges are well-defined:</p>
+        <ul>
+            <li>Extracts a sub-ROI around the clump with 2&times; radius padding</li>
+            <li>Searches with radius tolerance &plusmn;max(4, 35% of radius) pixels</li>
+            <li>Sweeps 5 Hough parameter configurations (dp, minDist, Canny threshold, accumulator threshold)</li>
+            <li>Adaptive Gaussian blur kernel sized proportional to marker radius</li>
+            <li>Confidence based on how close detected radius matches the profile: <code>conf = 0.6 + 0.3 &times; (1 - radius_diff)</code></li>
+            <li>Falls back to filled decomposition if Hough finds too few circles</li>
+        </ul>
+        <p><span class="badge badge-green">Clump recall: 91&ndash;100% at 2% tolerance (hollow, &le;50% overlap)</span></p>
+    </div>
+
+    <h3>User Point Count Hint</h3>
+    <p>The frontend provides an optional "Expected number of points" input. When provided, it acts as a soft constraint (weight 0.3) that biases decomposition thresholds and always activates the ShapeAwareDetector regardless of clump area percentage. The hint never forces exact agreement &mdash; the algorithm degrades gracefully when given an incorrect count.</p>
+
+    <!-- ======================================= -->
+    <h2 id="calibration-ui">6. Calibration UI</h2>
+
+    <p>The calibration screen is the most complex part of the frontend. It combines multiple interactive overlays on a single canvas:</p>
+
+    <div class="card">
+        <h4>Independent Axis Handles</h4>
+        <ul>
+            <li><strong>X-axis (blue):</strong> two handles connected by a horizontal line. Horizontal drag repositions that handle's X coordinate; vertical drag translates both handles together (moves the X-axis line up/down).</li>
+            <li><strong>Y-axis (green):</strong> two handles connected by a vertical line. Vertical drag repositions that handle's Y coordinate; horizontal drag translates both handles together (moves the Y-axis line left/right).</li>
+            <li>The axis lines themselves are also draggable for quick repositioning.</li>
+        </ul>
+    </div>
+
+    <div class="card">
+        <h4>8&times; Precision Zoom Panel</h4>
+        <p>A 200&times;200px panel that magnifies the area around the active handle at 8&times; zoom with crosshairs. Reads from the original-resolution image (not the scaled canvas) for pixel-precise alignment. Uses <code>imageSmoothingEnabled = false</code> for crisp magnification.</p>
+    </div>
+
+    <div class="card">
+        <h4>Detection Bounding Box</h4>
+        <p>An orange dashed rectangle with 4 draggable corner handles defining WHERE to search for points. Initialized with 15% padding beyond the axis range, clamped to image dimensions. This is independent from the axis handles (which define HOW to map pixel coordinates to data coordinates).</p>
+    </div>
+
+    <!-- ======================================= -->
+    <h2 id="testing">7. Test Harness &amp; Evaluation</h2>
 
     <h3>Philosophy: Test First, Always</h3>
     <p>The test harness was built before any digitization code. This was a non-negotiable design principle &mdash; we needed to measure accuracy objectively before and after every change. No "it looks right" testing.</p>
@@ -523,34 +631,41 @@
     <h3>Synthetic Plot Generator</h3>
     <p>The generator (<code>tests/generate_plots.py</code>) creates matplotlib scatterplots with known ground-truth coordinates, parameterized across:</p>
     <ul>
-        <li><strong>Point count:</strong> 5, 20, 50, 200</li>
+        <li><strong>Point count:</strong> 5, 20, 50, 100, 200</li>
         <li><strong>Marker shapes:</strong> circle, square, triangle, X, diamond</li>
-        <li><strong>Marker sizes:</strong> small, medium, large</li>
+        <li><strong>Marker sizes:</strong> small (20), medium (40), large (80), xlarge (120)</li>
+        <li><strong>Fill style:</strong> filled or unfilled (with configurable edge width)</li>
+        <li><strong>Marker color:</strong> black, red, blue, or any matplotlib color</li>
         <li><strong>Opacity:</strong> 1.0, 0.7, 0.4</li>
+        <li><strong>Overlaps:</strong> configurable overlap fraction (15&ndash;70%), pair count, triple count, isolated count</li>
         <li><strong>Axis ranges:</strong> integers, floats, negative values</li>
         <li><strong>Grid lines:</strong> on/off</li>
-        <li><strong>Background:</strong> white, light gray</li>
+        <li><strong>Background:</strong> white, light gray, medium gray</li>
     </ul>
     <p>Each plot is saved as a PNG with a companion JSON containing the exact x/y data values, axis ranges, and generation parameters.</p>
 
     <h3>Eval Scorer</h3>
-    <p>The scorer (<code>tests/eval_digitizer.py</code>) uses a spatial KDTree approach:</p>
+    <p>The scorer (<code>tests/eval_digitizer.py</code>) uses a spatial KDTree approach with two matching modes:</p>
     <ol>
         <li>Normalize predicted and ground-truth points by the tolerance (default: 1% of axis range per axis)</li>
-        <li>Build a KDTree from predicted points</li>
-        <li>Query each ground-truth point for its nearest predicted neighbor</li>
-        <li>A match requires distance &le; &radic;2 in normalized space (within tolerance on both axes)</li>
-        <li>Report: matched %, mean error X/Y, max error, false positives, false negatives</li>
+        <li>Build a KDTree from predicted points, query each ground-truth point for its nearest neighbor</li>
+        <li><strong>Standard matching:</strong> any prediction within tolerance counts as a match (multiple truths can match the same prediction)</li>
+        <li><strong>Unique matching:</strong> greedy assignment sorted by distance &mdash; each prediction matches at most one truth point (more realistic for clump evaluation)</li>
+        <li>Report: matched %, mean error X/Y, max error, false positives, false negatives, clump recall, singleton recall, clump precision</li>
     </ol>
 
     <h3>Test Suite Stats</h3>
     <div class="stat-row">
         <div class="stat">
-            <div class="value">55</div>
+            <div class="value">60</div>
             <div class="label">Baseline test plots</div>
         </div>
         <div class="stat">
-            <div class="value">35</div>
+            <div class="value">38</div>
+            <div class="label">Overlap test configs</div>
+        </div>
+        <div class="stat">
+            <div class="value">85</div>
             <div class="label">Pytest tests passing</div>
         </div>
         <div class="stat">
@@ -559,45 +674,61 @@
         </div>
     </div>
 
+    <h3>Overlap Test Categories</h3>
+    <table>
+        <thead>
+            <tr><th>Category</th><th>Count</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+            <tr><td>A: Filled overlaps</td><td>9</td><td>20&ndash;70% overlap, chains, dense clusters</td></tr>
+            <tr><td>B: Hollow overlaps</td><td>6</td><td>Unfilled circles at 20&ndash;50% overlap</td></tr>
+            <tr><td>C: Background variants</td><td>6</td><td>Gray backgrounds, grid lines, colored markers</td></tr>
+            <tr><td>D: Size variants</td><td>3</td><td>Small and xlarge markers with overlap</td></tr>
+            <tr><td>E: Mixed</td><td>3</td><td>40+ isolated points with 5&ndash;8 clump pairs</td></tr>
+            <tr><td>F: Point count hints</td><td>3</td><td>Tests with/without expected count</td></tr>
+            <tr><td>G: Dense + sparse clumps</td><td>8</td><td>100-point plots with 2&ndash;5 subtle overlapping pairs</td></tr>
+        </tbody>
+    </table>
+
     <!-- ======================================= -->
-    <h2 id="frontend">6. Frontend UI</h2>
+    <h2 id="error-handling">8. Error Handling &amp; Robustness</h2>
 
-    <p>The frontend is a three-step wizard built with React 18 and TypeScript, using the Canvas API for interactive overlays:</p>
+    <p>Several production bugs were discovered and fixed during deployment, leading to comprehensive error hardening:</p>
 
-    <div class="phase-grid">
-        <div class="card">
-            <h4>Step 1: Image Upload</h4>
-            <p>Drag-and-drop zone or file picker. Validates image type and shows a preview. Sends the file to <code>/api/upload</code> and receives an image ID.</p>
-        </div>
-        <div class="card">
-            <h4>Step 2: Axis Calibration</h4>
-            <p>Canvas overlay shows the uploaded image with blue dashed axis lines and draggable circular handles. Four numeric inputs let the user enter X min/max and Y min/max data values.</p>
-        </div>
-        <div class="card">
-            <h4>Step 3: Results View</h4>
-            <p>Red circles overlaid on the image at each detected point location, with opacity proportional to confidence. A scrollable data table shows point index, X, Y, and confidence %.</p>
-        </div>
-        <div class="card">
-            <h4>CSV Export</h4>
-            <p>Two buttons: "Copy CSV" (copies comma-delimited rows to clipboard) and "Download CSV" (triggers a file download). Users can go back to adjust calibration or start over.</p>
-        </div>
+    <div class="card">
+        <h4>Frontend</h4>
+        <ul>
+            <li><strong>Error Boundary:</strong> wraps all app content; catches render crashes and shows a "Start over" recovery button instead of a blank page</li>
+            <li><strong>Robust catch handlers:</strong> Promise <code>.catch()</code> uses <code>e instanceof Error ? e.message : String(e ?? "Unknown error")</code> &mdash; never assumes <code>e</code> has a <code>.message</code> property</li>
+            <li><strong>Response validation:</strong> <code>api.ts</code> validates that digitize responses have a <code>points</code> array before returning</li>
+        </ul>
     </div>
 
-    <p>The UI is responsive and usable on tablet-sized screens. All async operations show loading states, and errors are displayed clearly in red.</p>
+    <div class="card">
+        <h4>Backend</h4>
+        <ul>
+            <li><strong>Digitize try/except:</strong> wraps <code>digitizer.digitize()</code> and returns 500 with a descriptive message on failure</li>
+            <li><strong>Pixel range validation:</strong> rejects zero-width pixel ranges with 400 (prevents ZeroDivisionError)</li>
+            <li><strong>NaN/Infinity sanitization:</strong> all numeric output is checked and converted to 0.0 if not finite</li>
+            <li><strong>numpy scalar casting:</strong> <code>sanitize()</code> calls <code>float(v)</code> on all values to convert <code>numpy.float32</code> to native Python float before FastAPI serialization</li>
+        </ul>
+    </div>
 
     <!-- ======================================= -->
-    <h2 id="access">7. How to Access &amp; Deploy</h2>
+    <h2 id="access">9. How to Access &amp; Deploy</h2>
+
+    <h3>Live Deployment</h3>
+    <div class="highlight">
+        <p>The app is deployed on Railway and accessible at: <a href="https://webplotautodigitizer-production.up.railway.app" style="color: var(--blue);">https://webplotautodigitizer-production.up.railway.app</a></p>
+    </div>
 
     <h3>Option 1: Docker (Recommended)</h3>
-    <div class="highlight">
-        <p>The fastest way to run the full application. The Docker image builds both the frontend and backend, serving everything on a single port.</p>
-    </div>
     <pre><code># Build and start the app
 docker-compose up
 
 # Access at:
 # http://localhost:8000</code></pre>
-    <p>The multi-stage Dockerfile first builds the React frontend with Node 20, then packages the Python backend with the compiled static files. The final image includes OpenCV dependencies and serves the SPA from FastAPI's static file handler.</p>
+    <p>The multi-stage Dockerfile first builds the React frontend with Node 20, then packages the Python backend with the compiled static files. The final image includes OpenCV dependencies (using <code>libgl1</code> for Debian Trixie compatibility) and serves the SPA from FastAPI's static file handler.</p>
 
     <h3>Option 2: Local Development (No Docker)</h3>
     <pre><code># Backend
@@ -615,11 +746,11 @@ npm run dev
 
     <h3>Option 3: Cloud Deployment (Railway / Render / Fly.io)</h3>
     <ol>
-        <li>Push the project to a Git repository (GitHub, GitLab, etc.)</li>
+        <li>Push to GitHub (or connect your repo directly)</li>
         <li>Connect the repo to your hosting provider</li>
-        <li>Set the build command: <code>docker build -t app .</code></li>
-        <li>Set the start command: <code>docker run -p 8000:8000 app</code> (or let the platform auto-detect the Dockerfile)</li>
-        <li>The app serves both the API and frontend on port 8000</li>
+        <li>The platform auto-detects the Dockerfile</li>
+        <li>Set <code>PORT</code> environment variable if required (Railway sets this automatically)</li>
+        <li>The app serves both the API and frontend on a single port</li>
     </ol>
 
     <div class="card">
@@ -627,18 +758,19 @@ npm run dev
         <table>
             <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
             <tbody>
-                <tr><td><code>PORT</code></td><td>8000</td><td>Server port</td></tr>
-                <tr><td><code>VITE_API_URL</code></td><td>http://localhost:8000</td><td>Frontend API base URL (build-time)</td></tr>
+                <tr><td><code>PORT</code></td><td>8000</td><td>Server port (Railway sets this dynamically)</td></tr>
+                <tr><td><code>VITE_API_URL</code></td><td><em>(empty string)</em></td><td>Frontend API base URL; empty = same-origin relative paths</td></tr>
             </tbody>
         </table>
     </div>
 
     <h3>Running Tests</h3>
     <pre><code>source .venv/bin/activate
-python -m pytest tests/ -v</code></pre>
+python -m pytest tests/ -v
+# 85 tests, ~40 seconds</code></pre>
 
     <!-- ======================================= -->
-    <h2 id="known-issues">8. Known Limitations</h2>
+    <h2 id="known-issues">10. Known Limitations</h2>
 
     <table>
         <thead>
@@ -656,38 +788,46 @@ python -m pytest tests/ -v</code></pre>
                 <td>Thin cross shapes don't form solid blobs, and template correlation is weak for line-based markers</td>
             </tr>
             <tr>
-                <td>Docker untested locally</td>
-                <td>Low risk</td>
-                <td>Docker was not installed on the development machine; Dockerfile follows standard patterns and should work</td>
+                <td>Clumps with very tight spacing (&lt;0.5% of axis range)</td>
+                <td>Reduced splitting accuracy</td>
+                <td>Distance transform peaks merge when markers are nearly fully overlapping</td>
             </tr>
             <tr>
                 <td>OCR axis labels</td>
-                <td>Optional feature</td>
-                <td>Requires pytesseract installed; falls back to default range (0&ndash;10) if unavailable</td>
+                <td>Often fails on real-world plots</td>
+                <td>pytesseract struggles with small/rotated text; falls back to user-entered values</td>
+            </tr>
+            <tr>
+                <td>Uploaded images ephemeral</td>
+                <td>Lost on container restart</td>
+                <td>Stored in <code>/tmp</code>; would need persistent volume or object storage for durability</td>
             </tr>
         </tbody>
     </table>
 
     <!-- ======================================= -->
-    <h2 id="decisions">9. Key Design Decisions</h2>
+    <h2 id="decisions">11. Key Design Decisions</h2>
 
     <h3>Why Test-First?</h3>
-    <p>Image processing is notoriously hard to evaluate by eye. A point detection algorithm might look "good enough" on one image but fail catastrophically on another. By building the synthetic test harness first (Phase 1, before any detection code), we ensured every method was evaluated on the same 55 plots with the same scoring criteria. This let us make data-driven decisions about which approach to ship.</p>
+    <p>Image processing is notoriously hard to evaluate by eye. A point detection algorithm might look "good enough" on one image but fail catastrophically on another. By building the synthetic test harness first (Phase 1, before any detection code), we ensured every method was evaluated on the same plots with the same scoring criteria. This let us make data-driven decisions about which approach to ship.</p>
 
     <h3>Why Multiple Methods?</h3>
-    <p>No single computer vision technique handles all marker shapes equally well. Blob detection is fast and precise for filled shapes but fails on triangles and crosses. Template matching handles everything but is slow and produces more false positives. By implementing both and comparing empirically, we discovered the hybrid approach that gets 91.9% &mdash; better than either alone.</p>
+    <p>No single computer vision technique handles all marker shapes equally well. Blob detection is fast and precise for filled shapes but fails on triangles and crosses. Template matching handles everything but is slow and produces more false positives. Shape-aware decomposition handles overlaps but requires singletons to calibrate. By implementing all four and routing intelligently, the hybrid gets the best of each.</p>
 
     <h3>Why User Calibration is King</h3>
-    <p>Auto-detected axes are a convenience, not a requirement. Real-world plots have legends, annotations, insets, and non-standard layouts that confuse automated detection. The draggable fiducial handles let users correct any axis detection errors, making the system robust even when auto-detection completely fails.</p>
+    <p>Auto-detected axes are a convenience, not a requirement. Real-world plots have legends, annotations, insets, and non-standard layouts that confuse automated detection. The draggable fiducial handles let users correct any axis detection errors, and calibration state persists when the user goes back to adjust &mdash; their work is never lost.</p>
 
     <h3>Why CPU-Only?</h3>
     <p>The target deployment is cheap cloud hosting (Railway, Render, Fly.io) without GPU access. All image processing uses OpenCV and NumPy on CPU. The hybrid digitizer completes in under 4 seconds even in worst-case scenarios, well within the 10-second budget.</p>
 
     <h3>Why a Single Docker Port?</h3>
-    <p>In production, the FastAPI backend serves the compiled React frontend as static files from the same port (8000). This eliminates CORS issues, simplifies deployment to a single container, and means users access everything at one URL.</p>
+    <p>In production, the FastAPI backend serves the compiled React frontend as static files from the same port. This eliminates CORS issues, simplifies deployment to a single container, and means users access everything at one URL.</p>
+
+    <h3>Why Unique Matching in Scoring?</h3>
+    <p>Standard KDTree matching lets multiple ground-truth points match the same prediction, inflating recall when clumped points collapse to a single detection. Unique matching (greedy assignment) gives a realistic measure of how many individual points the detector resolves. This was critical for measuring clump decomposition quality.</p>
 
     <!-- ======================================= -->
-    <h2>Project Timeline</h2>
+    <h2 id="timeline">12. Project Timeline</h2>
 
     <div class="phase-grid">
         <div class="card">
@@ -696,7 +836,7 @@ python -m pytest tests/ -v</code></pre>
         </div>
         <div class="card">
             <h4>Phase 1: Test Harness</h4>
-            <p>Synthetic plot generator, eval scorer, 55 baseline plots, pytest fixtures.</p>
+            <p>Synthetic plot generator, eval scorer, 60 baseline plots, pytest fixtures.</p>
         </div>
         <div class="card">
             <h4>Phase 2: Axis Detection</h4>
@@ -711,16 +851,40 @@ python -m pytest tests/ -v</code></pre>
             <p>Cross-correlation with marker library, 78.5% mean, handles all shapes but slower.</p>
         </div>
         <div class="card">
-            <h4>Phase 5: Hybrid Method</h4>
-            <p>Agreement-based method selection, 91.9% mean &mdash; selected as production digitizer.</p>
-        </div>
-        <div class="card">
-            <h4>Phase 6: Hardening</h4>
-            <p>Confidence scores, edge case handling, expanded test suite to 55 plots.</p>
+            <h4>Phase 5&ndash;6: Hybrid &amp; Hardening</h4>
+            <p>Agreement-based method selection (91.9% mean), confidence scores, edge case handling.</p>
         </div>
         <div class="card">
             <h4>Phase 7&ndash;8: UI &amp; Deploy</h4>
-            <p>Full wizard UI, responsive layout, Docker deployment, README, end-to-end testing.</p>
+            <p>Full wizard UI, responsive layout, Docker deployment, landing page, end-to-end testing.</p>
+        </div>
+        <div class="card">
+            <h4>Phase 9: Cloud Deploy</h4>
+            <p>GitHub repo, Railway deployment, production CORS/PORT fixes, live URL.</p>
+        </div>
+        <div class="card">
+            <h4>Phase 10: Refinements</h4>
+            <p>About page, translucent overlays, independent axis handles, clump tests.</p>
+        </div>
+        <div class="card">
+            <h4>Phase 11: Precision Calibration</h4>
+            <p>Constrained handles, zoom panel, detection bounding box, dual bbox detection.</p>
+        </div>
+        <div class="card">
+            <h4>Phase 12&ndash;13: Fixes &amp; Persistence</h4>
+            <p>Bounding box clamping, Y-coordinate fix, calibration persistence, fluid layout.</p>
+        </div>
+        <div class="card">
+            <h4>Phase 14: Clump Decomposition</h4>
+            <p>Shape-aware detection: marker profiling, filled/hollow decomposition, 100%/91% clump recall, 38 overlap test configs.</p>
+        </div>
+        <div class="card">
+            <h4>Phase 15&ndash;16: Bug Fixes</h4>
+            <p>Blank page fix (Error Boundary), numpy serialization fix, response validation, NaN sanitization.</p>
+        </div>
+        <div class="card">
+            <h4>Phase 17: Recall Tuning</h4>
+            <p>Fixed test calibration offset, unique matching scorer, erosion split &amp; DT refinement, clump recall targets achieved.</p>
         </div>
     </div>
 
@@ -728,7 +892,8 @@ python -m pytest tests/ -v</code></pre>
 
 <footer>
     <p>WebPlot AutoDigitizer &mdash; Project Report<br>
-    Generated 2026-05-04 | Built with Python, FastAPI, OpenCV, React, TypeScript</p>
+    Last updated 2026-05-04 | Built with Python, FastAPI, OpenCV, React, TypeScript<br>
+    <a href="https://github.com/chchatham/WebPlotAutoDigitizer" style="color: var(--blue);">View on GitHub</a></p>
 </footer>
 
 </body>

@@ -25,7 +25,7 @@ def _make_calibration_from_gt(gt: dict, image: np.ndarray) -> AxisCalibration:
     h, w = image.shape[:2]
     return AxisCalibration(
         x_pixel_range=(w * 0.125, w * 0.9),
-        y_pixel_range=(h * 0.88, h * 0.11),
+        y_pixel_range=(h * 0.89, h * 0.12),
         x_data_range=tuple(gt["x_range"]),
         y_data_range=tuple(gt["y_range"]),
     )
@@ -196,31 +196,31 @@ class TestShapeAwareOnOverlaps:
             tuple(gt["x_range"]), tuple(gt["y_range"]),
             marker_size=gt["params"]["marker_size"],
             tolerance_pct=tolerance,
+            unique_matching=True,
         )
         return score, result
 
     def test_filled_30pct_clump_recall(self, tmp_path: Path):
-        """Measure clump recall on filled circles with 30% overlap."""
+        """Clump recall on filled circles with 30% overlap — target ≥75%."""
         score, _ = self._run_shape_aware(tmp_path, 1)  # ovl_02_filled_30pct
-        # Target: 75% clump recall. Use lenient threshold during development.
         if score.clump_recall is not None:
-            assert score.clump_recall >= 40.0, (
+            assert score.clump_recall >= 75.0, (
                 f"Clump recall {score.clump_recall:.1f}% (target 75%)"
             )
 
     def test_filled_50pct_clump_recall(self, tmp_path: Path):
-        """Measure clump recall on filled circles with 50% overlap."""
+        """Clump recall on filled circles with 50% overlap — target ≥75%."""
         score, _ = self._run_shape_aware(tmp_path, 2)  # ovl_03_filled_50pct
         if score.clump_recall is not None:
-            assert score.clump_recall >= 30.0, (
+            assert score.clump_recall >= 75.0, (
                 f"Clump recall {score.clump_recall:.1f}% (target 75%)"
             )
 
     def test_hollow_30pct_clump_recall(self, tmp_path: Path):
-        """Measure clump recall on unfilled circles with 30% overlap."""
+        """Clump recall on unfilled circles with 30% overlap — target ≥85%."""
         score, _ = self._run_shape_aware(tmp_path, 10)  # ovl_11_hollow_30pct
         if score.clump_recall is not None:
-            assert score.clump_recall >= 30.0, (
+            assert score.clump_recall >= 85.0, (
                 f"Clump recall {score.clump_recall:.1f}% (target 85%)"
             )
 

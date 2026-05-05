@@ -25,8 +25,8 @@ def _make_calibration_from_gt(gt: dict, image: np.ndarray) -> AxisCalibration:
     # matplotlib default: ~12.5% left margin, ~5% right, ~10% top, ~12% bottom (approx)
     x_min_px = w * 0.125
     x_max_px = w * 0.9
-    y_min_px = h * 0.88  # bottom of plot (higher pixel y)
-    y_max_px = h * 0.11  # top of plot (lower pixel y)
+    y_min_px = h * 0.89  # bottom of plot (higher pixel y)
+    y_max_px = h * 0.12  # top of plot (lower pixel y)
 
     return AxisCalibration(
         x_pixel_range=(x_min_px, x_max_px),

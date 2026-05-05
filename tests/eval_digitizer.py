@@ -60,6 +60,7 @@ def score_predictions(
     x_range: tuple[float, float],
     y_range: tuple[float, float],
     tolerance_pct: float = 1.0,
+    unique_matching: bool = False,
 ) -> EvalResult:
     x_span = x_range[1] - x_range[0]
     y_span = y_range[1] - y_range[0]
@@ -95,28 +96,48 @@ def score_predictions(
             n_predicted=n_pred,
         )
 
-    # Normalize to make tolerance isotropic for KDTree
     pred_norm = np.column_stack([predicted_x / tol_x, predicted_y / tol_y])
     truth_norm = np.column_stack([truth_x / tol_x, truth_y / tol_y])
+    max_d = np.sqrt(2.0)
 
     tree = KDTree(pred_norm)
     distances, indices = tree.query(truth_norm)
 
-    # A match requires distance <= 1.0 in normalized space (within tolerance on both axes)
-    matched_mask = distances <= np.sqrt(2.0)  # max L2 when both axes at tolerance
+    if unique_matching:
+        # Greedy unique assignment: each prediction matches at most one truth
+        pairs = [(int(ti), int(indices[ti]), float(distances[ti]))
+                 for ti in range(n_truth) if distances[ti] <= max_d]
+        pairs.sort(key=lambda x: x[2])
 
-    matched_truth_indices = np.where(matched_mask)[0]
-    matched_pred_indices = set(indices[matched_mask])
+        matched_truth_set: set[int] = set()
+        matched_pred_set: set[int] = set()
+        match_pairs: list[tuple[int, int]] = []
 
-    n_matched = len(matched_truth_indices)
-    matched_pct = (n_matched / n_truth) * 100.0
+        for ti, pi, d in pairs:
+            if ti not in matched_truth_set and pi not in matched_pred_set:
+                matched_truth_set.add(ti)
+                matched_pred_set.add(pi)
+                match_pairs.append((ti, pi))
 
-    errors_x = []
-    errors_y = []
-    for ti in matched_truth_indices:
-        pi = indices[ti]
-        errors_x.append(abs(predicted_x[pi] - truth_x[ti]))
-        errors_y.append(abs(predicted_y[pi] - truth_y[ti]))
+        n_matched = len(matched_truth_set)
+        matched_pct = (n_matched / n_truth) * 100.0
+
+        errors_x = [abs(predicted_x[pi] - truth_x[ti]) for ti, pi in match_pairs]
+        errors_y = [abs(predicted_y[pi] - truth_y[ti]) for ti, pi in match_pairs]
+        false_positives = n_pred - len(matched_pred_set)
+        false_negatives = n_truth - n_matched
+    else:
+        matched_mask = distances <= max_d
+        matched_truth_indices = np.where(matched_mask)[0]
+        matched_pred_indices_set = set(indices[matched_mask])
+
+        n_matched = len(matched_truth_indices)
+        matched_pct = (n_matched / n_truth) * 100.0
+
+        errors_x = [abs(predicted_x[indices[ti]] - truth_x[ti]) for ti in matched_truth_indices]
+        errors_y = [abs(predicted_y[indices[ti]] - truth_y[ti]) for ti in matched_truth_indices]
+        false_positives = n_pred - len(matched_pred_indices_set)
+        false_negatives = n_truth - n_matched
 
     if errors_x:
         mean_err_x = float(np.mean(errors_x))
@@ -124,9 +145,6 @@ def score_predictions(
         max_err = float(max(max(errors_x), max(errors_y)))
     else:
         mean_err_x = mean_err_y = max_err = 0.0
-
-    false_positives = n_pred - len(matched_pred_indices)
-    false_negatives = n_truth - n_matched
 
     return EvalResult(
         matched_pct=matched_pct,
@@ -192,10 +210,12 @@ def score_predictions_with_clumps(
     y_range: tuple[float, float],
     marker_size: float = 40.0,
     tolerance_pct: float = 1.0,
+    unique_matching: bool = False,
 ) -> EvalResult:
     """Extended scoring that separately tracks clumped vs singleton recall."""
     base_result = score_predictions(
-        predicted_x, predicted_y, truth_x, truth_y, x_range, y_range, tolerance_pct
+        predicted_x, predicted_y, truth_x, truth_y, x_range, y_range,
+        tolerance_pct, unique_matching,
     )
 
     if len(truth_x) == 0:
@@ -210,19 +230,34 @@ def score_predictions_with_clumps(
     tol_x = x_span * tolerance_pct / 100.0
     tol_y = y_span * tolerance_pct / 100.0
 
-    def _recall_for_subset(indices: np.ndarray) -> float | None:
-        if len(indices) == 0:
+    def _recall_for_subset(subset_indices: np.ndarray) -> float | None:
+        if len(subset_indices) == 0:
             return None
         if len(predicted_x) == 0:
             return 0.0
-        subset_x = truth_x[indices]
-        subset_y = truth_y[indices]
+        subset_x = truth_x[subset_indices]
+        subset_y = truth_y[subset_indices]
         pred_norm = np.column_stack([predicted_x / tol_x, predicted_y / tol_y])
         truth_norm = np.column_stack([subset_x / tol_x, subset_y / tol_y])
         tree = KDTree(pred_norm)
-        distances, _ = tree.query(truth_norm)
-        matched = np.sum(distances <= np.sqrt(2.0))
-        return float(matched) / len(indices) * 100.0
+        distances, nn_indices = tree.query(truth_norm)
+        max_d = np.sqrt(2.0)
+
+        if unique_matching:
+            pairs = [(i, int(nn_indices[i]), float(distances[i]))
+                     for i in range(len(subset_indices)) if distances[i] <= max_d]
+            pairs.sort(key=lambda x: x[2])
+            used_truth: set[int] = set()
+            used_pred: set[int] = set()
+            for ti, pi, _ in pairs:
+                if ti not in used_truth and pi not in used_pred:
+                    used_truth.add(ti)
+                    used_pred.add(pi)
+            matched = len(used_truth)
+        else:
+            matched = int(np.sum(distances <= max_d))
+
+        return float(matched) / len(subset_indices) * 100.0
 
     clump_recall = _recall_for_subset(clump_indices)
     singleton_recall = _recall_for_subset(singleton_indices)

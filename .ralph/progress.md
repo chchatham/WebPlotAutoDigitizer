@@ -1,11 +1,35 @@
 # WebPlotAutoDigitizer — Progress
 
 ## Last Updated
-Iteration 13 — Phase 14h threshold tuning. 2026-05-04.
+Iteration 16 — Clump recall tuning + About page update. 2026-05-04.
 
 ## Current Focus
-Phase 14h committed. Deploying to Railway.
+Phase 14c/14d clump recall tuning COMPLETE. About page updated with comprehensive report.
+Ready to commit, push, and deploy to Railway.
 Live at: https://webplotautodigitizer-production.up.railway.app
+
+## What Changed (Clump Recall Tuning + About Page — 2026-05-04)
+Phase 14c/14d targets met: filled clump recall ≥75%, hollow clump recall ≥85%.
+1. **eval_digitizer.py** — Added `unique_matching: bool = False` parameter to `score_predictions()` and `score_predictions_with_clumps()`. Greedy unique assignment prevents inflated recall from multiple truth points matching one prediction.
+2. **shape_aware.py** — Improved filled decomposition: ellipse-based placement with DT refinement + mutual exclusion (prevents duplicate centroid convergence), erosion split, better strategy ordering. Improved hollow decomposition: widened Hough radius tolerance to ±max(4, 35%), 5 parameter sweep configs.
+3. **8 test files** — Fixed calibration Y offset: `y_pixel_range=(h*0.88, h*0.11)` → `(h*0.89, h*0.12)`. matplotlib `bottom=0.11, top=0.88` maps to pixel `((1-0.11)*h, (1-0.88)*h)`, NOT `(0.88*h, 0.11*h)`. This 9-pixel systematic error was the primary cause of poor clump recall scores.
+4. **test_clump_decomposition.py** — Tightened assertions to require ≥75% filled / ≥85% hollow clump recall with unique matching.
+5. **report.html + frontend/public/about.html** — Complete rewrite: comprehensive report covering all 16 phases, clump decomposition algorithms, calibration UI, error handling, deployment.
+All 85 tests pass with tightened assertions. Frontend builds cleanly.
+
+## What Changed (numpy.float32 Serialization Fix — 2026-05-04)
+User reported "Digitization failed" error when uploading testplot.png and clicking "Confirm & Digitize." Root cause: digitizers return `numpy.float32` values in `DetectedPoint` fields. FastAPI's `jsonable_encoder` can't serialize numpy scalar types — throws `ValueError: [TypeError("'numpy.float32' object is not iterable")]`, which became a 500 Internal Server Error. The `sanitize()` function in `main.py` checked for NaN/Inf but passed numpy floats through unchanged.
+1. **main.py** — Added `v = float(v)` at the top of `sanitize()` to convert numpy scalars to native Python floats before NaN/Inf check and before returning to FastAPI.
+All 85 tests pass. Deployed as 6d062df4, SUCCESS.
+
+## What Changed (Blank Page Fix — 2026-05-04)
+User reported blank page after clicking "Confirm & Digitize." Root cause: ResultsView's `.catch((e) => setError(e.message))` assumed `e` always had `.message`. When rejecting with non-Error values (or if message was undefined), `setError(undefined)` was falsy → component returned `null` → blank screen.
+1. **ErrorBoundary.tsx** — NEW: wraps all app content, catches render crashes, shows recovery UI with "Start over" button.
+2. **ResultsView.tsx** — Robust catch handler: `e instanceof Error ? e.message : String(e ?? "Unknown error")`. Validates response shape before setResult. Shows recovery buttons instead of returning null when no result.
+3. **api.ts** — Separate try/catch for fetch (network errors) vs res.json() (parse errors). Validates response has `points` array before returning.
+4. **main.py** — Wraps `digitizer.digitize()` in try/except (returns 500 with message). Validates pixel ranges non-zero (prevents ZeroDivisionError, returns 400). Sanitizes all numeric output (NaN/Inf → 0.0).
+5. **test_api.py** — 3 new tests: missing image 404, degenerate calibration 400, no NaN/null in response.
+All 85 tests pass.
 
 ## What Changed (Phase 14h — Threshold Tuning for 2-Point Clumps)
 User reported 93/100 detection on a dense red-circle plot with 2-point clumps. Root cause: three overly conservative thresholds.
@@ -35,8 +59,8 @@ On the 30 overlap test cases: shape-aware achieves 100% clump recall at the curr
 - **Axis detection**: Dual-strategy bbox detection (background color + Hough lines), optional OCR, AxisCalibration dataclass
 - **3 Digitizers**: BlobDetector (A, with watershed splitting), TemplateMatcher (B), HybridDigitizer (C — production)
 - **DetectionBounds**: Optional dataclass passed through API → all digitizers to override default ROI
-- **Test harness**: 60 baseline plots + 8 randomized-per-run tests, eval scorer, 48 passing pytest tests (including Y-accuracy e2e test)
-- **Frontend**: 3-step wizard (Upload → AxisCalibration → ResultsView + CsvExport), fluid About page (100vw iframe), responsive CSS
+- **Test harness**: 60 baseline plots + 8 randomized-per-run tests, eval scorer, 85 passing pytest tests (including Y-accuracy e2e, error handling, NaN validation)
+- **Frontend**: 3-step wizard (Upload → AxisCalibration → ResultsView + CsvExport), ErrorBoundary, fluid About page (100vw iframe), responsive CSS
 - **Calibration UI**: 2D axis handles (X: horiz + shared vertical translate; Y: vert + shared horizontal translate), axis line dragging, 8x precision zoom panel, orange detection bounding box, calibration persistence on re-edit
 - **Docker**: Multi-stage Dockerfile, docker-compose.yml, .dockerignore
 - **Static serving**: Backend serves frontend build from `/static` in production
@@ -87,7 +111,7 @@ On the 30 overlap test cases: shape-aware achieves 100% clump recall at the curr
 5. **Clump tests + blob splitting** — 5 seeded clump configs, 4 randomized tests, watershed splitting
 
 ## What's Broken
-- Nothing currently broken. All 48 tests pass.
+- Nothing currently broken. All 85 tests pass.
 - OCR axis label detection fails on real-world ggplot-style images (defaults to 0–10). User must manually set axis data ranges.
 
 ## Production Bugs Fixed (this session)
@@ -97,6 +121,8 @@ On the 30 overlap test cases: shape-aware achieves 100% clump recall at the curr
 4. **Y-coordinate scalar offset** — `handleConfirm` mixed `xAxisY` into `y_pixel_range`, causing all Y data coordinates to shift by a constant amount when X/Y axis positions diverged. Fixed by using only Y-axis handle positions.
 5. **Calibration lost on re-edit** — "Adjust calibration" re-ran `detectAxes`, discarding user's handle positions and data ranges. Fixed by passing `previousCalibration` prop.
 6. **Narrow About page** — About page was nested inside the digitizer's `maxWidth: 800` container (with Vite scaffold `text-align: center` on `#root` compounding the issue). Required 3 attempts to fix — final solution: separate render path with `100vw` fluid layout.
+7. **Blank page after digitization** — ResultsView's `.catch((e) => setError(e.message))` assumed `e` always had `.message`. Non-Error rejections set `setError(undefined)` → falsy → component returned null → blank. Also: no Error Boundary existed, so any render crash blanked the entire page. Fixed with ErrorBoundary, robust catch, response validation, backend try/except + NaN sanitization.
+8. **"Digitization failed" on real plots** — `sanitize()` in `main.py` passed `numpy.float32` values through to FastAPI, which can't serialize numpy scalar types. Added `v = float(v)` to convert to native Python float.
 
 ## Digitization Method Comparison (Final)
 | Method | Mean Rate | Median Rate | Speed | Best On | Worst On |

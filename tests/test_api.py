@@ -208,8 +208,8 @@ def test_digitize_y_coordinate_accuracy(client, tmp_path):
 
     x_min_px = w * 0.125
     x_max_px = w * 0.9
-    y_min_px = h * 0.88
-    y_max_px = h * 0.11
+    y_min_px = h * 0.89
+    y_max_px = h * 0.12
 
     resp = client.post("/api/digitize", json={
         "image_id": image_id,

@@ -208,7 +208,6 @@ def _local_maxima_nms(
     min_val: float = 1.0,
 ) -> list[tuple[int, int, float]]:
     """Find local maxima in distance transform with non-maximum suppression."""
-    # Dilate to find local max regions
     kernel_size = max(3, int(min_distance))
     if kernel_size % 2 == 0:
         kernel_size += 1
@@ -219,12 +218,10 @@ def _local_maxima_nms(
     if len(xs) == 0:
         return []
 
-    # Sort by distance value (highest first)
     vals = dist[ys, xs]
     order = np.argsort(-vals)
     xs, ys, vals = xs[order], ys[order], vals[order]
 
-    # Non-maximum suppression
     kept: list[tuple[int, int, float]] = []
     suppressed = np.zeros(len(xs), dtype=bool)
 
@@ -232,11 +229,141 @@ def _local_maxima_nms(
         if suppressed[i]:
             continue
         kept.append((int(xs[i]), int(ys[i]), float(vals[i])))
-        # Suppress neighbors within min_distance
         dists_sq = (xs[i+1:].astype(float) - xs[i])**2 + (ys[i+1:].astype(float) - ys[i])**2
-        suppressed[i+1:] |= dists_sq < (min_distance * 0.8)**2
+        suppressed[i+1:] |= dists_sq < (min_distance * 0.5)**2
 
     return kept
+
+
+def _ellipse_based_placement(
+    contour: np.ndarray,
+    profile: MarkerProfile,
+    estimated_n: int,
+    x_offset: int,
+    y_offset: int,
+) -> list[tuple[float, float, float]]:
+    """Place N points along the major axis of a contour's fitted ellipse.
+
+    For two overlapping circles, the merged shape is elongated along the
+    axis connecting their centers. Fitting an ellipse and distributing
+    points along its major axis recovers the original centers.
+    """
+    if len(contour) < 5:
+        return []
+
+    try:
+        (ecx, ecy), (minor, major), angle = cv2.fitEllipse(contour)
+    except cv2.error:
+        return []
+
+    angle_rad = np.deg2rad(angle)
+    dx = np.cos(angle_rad)
+    dy = np.sin(angle_rad)
+
+    r = profile.mean_radius_px
+    if estimated_n == 2:
+        half_len = major / 2.0 - r * 0.95
+        half_len = max(half_len, r * 0.15)
+        return [
+            (ecx - dx * half_len + x_offset, ecy - dy * half_len + y_offset, 0.80),
+            (ecx + dx * half_len + x_offset, ecy + dy * half_len + y_offset, 0.80),
+        ]
+
+    total_span = major - 2.0 * r * 0.95
+    spacing = total_span / (estimated_n - 1) if estimated_n > 1 else 0
+    centroids = []
+    for i in range(estimated_n):
+        t = -total_span / 2.0 + i * spacing
+        cx = ecx + dx * t + x_offset
+        cy = ecy + dy * t + y_offset
+        centroids.append((cx, cy, 0.70))
+    return centroids
+
+
+def _refine_centroids_via_dist(
+    centroids: list[tuple[float, float, float]],
+    dist: np.ndarray,
+    x0: int,
+    y0: int,
+    x_offset: int,
+    y_offset: int,
+    radius: float,
+) -> list[tuple[float, float, float]]:
+    """Refine centroid positions by finding the local distance-transform maximum
+    near each initial placement. Uses mutual exclusion: after placing a point,
+    suppress the DT around it so the next point can't collapse to the same peak.
+    """
+    search_r = max(5, int(radius * 1.2))
+    exclude_r = max(3, int(radius * 0.5))
+    work_dist = dist.copy().astype(np.float64)
+    refined = []
+
+    for cx, cy, conf in centroids:
+        local_x = int(cx - x_offset - x0)
+        local_y = int(cy - y_offset - y0)
+
+        ly0 = max(0, local_y - search_r)
+        ly1 = min(work_dist.shape[0], local_y + search_r + 1)
+        lx0 = max(0, local_x - search_r)
+        lx1 = min(work_dist.shape[1], local_x + search_r + 1)
+
+        patch = work_dist[ly0:ly1, lx0:lx1]
+        if patch.size == 0 or patch.max() < 0.5:
+            refined.append((cx, cy, conf))
+            continue
+
+        best_y, best_x = np.unravel_index(patch.argmax(), patch.shape)
+        abs_x = best_x + lx0
+        abs_y = best_y + ly0
+        new_x = float(abs_x) + x0 + x_offset
+        new_y = float(abs_y) + y0 + y_offset
+        refined.append((new_x, new_y, conf))
+
+        # Suppress DT around this point so next point finds a different peak
+        ey0 = max(0, abs_y - exclude_r)
+        ey1 = min(work_dist.shape[0], abs_y + exclude_r + 1)
+        ex0 = max(0, abs_x - exclude_r)
+        ex1 = min(work_dist.shape[1], abs_x + exclude_r + 1)
+        work_dist[ey0:ey1, ex0:ex1] = 0
+
+    return refined
+
+
+def _erosion_split(
+    mask: np.ndarray,
+    profile: MarkerProfile,
+    estimated_n: int,
+    x0: int,
+    y0: int,
+    x_offset: int,
+    y_offset: int,
+) -> list[tuple[float, float, float]]:
+    """Split a clump by progressively eroding until it separates into components."""
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    best_centroids: list[tuple[float, float, float]] = []
+    max_iters = max(2, int(profile.mean_radius_px * 0.7))
+
+    eroded = mask.copy()
+    for _ in range(max_iters):
+        eroded = cv2.erode(eroded, kernel)
+        if cv2.countNonZero(eroded) < 4:
+            break
+
+        contours, _ = cv2.findContours(eroded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if len(contours) >= estimated_n:
+            centroids = []
+            for c in contours:
+                M = cv2.moments(c)
+                if M["m00"] == 0:
+                    continue
+                cx = M["m10"] / M["m00"] + x0 + x_offset
+                cy = M["m01"] / M["m00"] + y0 + y_offset
+                centroids.append((cx, cy, 0.78))
+            if len(centroids) >= estimated_n:
+                best_centroids = centroids[:estimated_n]
+                break
+
+    return best_centroids
 
 
 def decompose_filled_clump(
@@ -249,8 +376,9 @@ def decompose_filled_clump(
 ) -> list[tuple[float, float, float]]:
     """Decompose a merged filled-marker clump into individual point centers.
 
-    Uses distance transform with local maxima detection and NMS,
-    guided by the marker profile radius.
+    Uses multiple strategies: ellipse-based placement, distance transform
+    with NMS, label-based decomposition, and skeleton spacing.
+    All results are refined using the distance transform for sub-pixel accuracy.
     Returns list of (px_x, px_y, confidence).
     """
     x, y, w, h = cv2.boundingRect(contour)
@@ -270,18 +398,32 @@ def decompose_filled_clump(
     estimated_n = max(2, round(clump_area / profile.mean_area_px))
 
     if expected_n is not None:
-        # Soft constraint: blend between area estimate and user hint
         estimated_n = round(estimated_n * 0.7 + expected_n * 0.3)
         estimated_n = max(2, estimated_n)
 
     dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
 
-    # Strategy 1: Local maxima with NMS at marker-radius spacing
-    min_sep = profile.mean_radius_px * 0.8
-    best_centroids = []
+    # Strategy 0a: Erosion split — most accurate for touching/overlapping circles
+    erosion_centroids = _erosion_split(
+        mask, profile, estimated_n, x0, y0, x_offset, y_offset,
+    )
+
+    # Strategy 0b: Ellipse-based placement with DT refinement
+    ellipse_centroids = _ellipse_based_placement(
+        contour, profile, estimated_n, x_offset, y_offset,
+    )
+    if ellipse_centroids:
+        ellipse_centroids = _refine_centroids_via_dist(
+            ellipse_centroids, dist, x0, y0, x_offset, y_offset,
+            profile.mean_radius_px,
+        )
+
+    # Strategy 1: Local maxima with NMS at reduced spacing
+    min_sep = profile.mean_radius_px * 0.6
+    best_centroids: list[tuple[float, float, float]] = []
     best_diff = float("inf")
 
-    for min_val_frac in [0.3, 0.2, 0.4, 0.15, 0.5]:
+    for min_val_frac in [0.2, 0.15, 0.3, 0.1, 0.4, 0.5]:
         min_val = dist.max() * min_val_frac
         peaks = _local_maxima_nms(dist, min_sep, min_val)
         if len(peaks) < 2:
@@ -302,7 +444,18 @@ def decompose_filled_clump(
         if len(centroids) == estimated_n:
             break
 
-    # Strategy 2: If NMS found too few, try label-based approach with lower thresholds
+    # Pick best among erosion, ellipse, and NMS results
+    # Erosion is preferred when it finds the right count (most accurate centroids)
+    if erosion_centroids and len(erosion_centroids) == estimated_n:
+        best_centroids = erosion_centroids
+        best_diff = 0
+    elif ellipse_centroids:
+        ellipse_diff = abs(len(ellipse_centroids) - estimated_n)
+        if not best_centroids or ellipse_diff < best_diff:
+            best_centroids = ellipse_centroids
+            best_diff = ellipse_diff
+
+    # Strategy 2: Label-based approach with lower thresholds
     if len(best_centroids) < estimated_n:
         for threshold_frac in [0.25, 0.2, 0.15, 0.1]:
             thresh_val = dist.max() * threshold_frac
@@ -336,12 +489,10 @@ def decompose_filled_clump(
             if len(centroids) >= estimated_n:
                 break
 
-    # Strategy 3: If still too few, use skeleton-based center spacing
+    # Strategy 3: Skeleton-based center spacing for larger clumps
     if len(best_centroids) < estimated_n and estimated_n >= 3:
-        # Place points along the skeleton of the clump at regular intervals
         skeleton = cv2.ximgproc.thinning(mask) if hasattr(cv2, 'ximgproc') else None
         if skeleton is None:
-            # Manual skeleton via repeated erosion
             eroded = mask.copy()
             for _ in range(max(1, int(profile.mean_radius_px * 0.5))):
                 eroded = cv2.erode(eroded, np.ones((3, 3), np.uint8))
@@ -351,7 +502,6 @@ def decompose_filled_clump(
 
         skel_ys, skel_xs = np.where(skeleton > 0)
         if len(skel_xs) >= estimated_n:
-            # Sample evenly along skeleton pixels
             indices = np.linspace(0, len(skel_xs) - 1, estimated_n, dtype=int)
             centroids = []
             for idx in indices:
@@ -382,10 +532,11 @@ def decompose_hollow_clump(
 ) -> list[tuple[float, float, float]]:
     """Decompose overlapping hollow/unfilled circles using Hough circle detection.
 
-    Falls back to filled decomposition if Hough finds too few circles.
+    Tries multiple Hough parameter combinations for robustness.
+    Falls back to ellipse-based then filled decomposition if Hough finds too few.
     """
     x, y, w, h = cv2.boundingRect(contour)
-    pad = int(profile.mean_radius_px * 1.5)
+    pad = int(profile.mean_radius_px * 2.0)
     x0 = max(0, x - pad)
     y0 = max(0, y - pad)
     x1 = min(gray_roi.shape[1], x + w + pad)
@@ -395,40 +546,56 @@ def decompose_hollow_clump(
     if sub_roi.size == 0:
         return decompose_filled_clump(thresh, contour, profile, x_offset, y_offset, expected_n)
 
-    min_r = max(3, int(profile.mean_radius_px - 2))
-    max_r = int(profile.mean_radius_px + 2)
-
-    # Apply edge detection for Hough
-    blurred = cv2.GaussianBlur(sub_roi, (5, 5), 1.0)
-    circles = cv2.HoughCircles(
-        blurred,
-        cv2.HOUGH_GRADIENT,
-        dp=1.2,
-        minDist=int(profile.mean_radius_px * 1.2),
-        param1=80,
-        param2=25,
-        minRadius=min_r,
-        maxRadius=max_r,
-    )
-
     clump_area = cv2.contourArea(contour)
     estimated_n = max(2, round(clump_area / profile.mean_area_px))
 
-    if circles is not None and len(circles[0]) >= 2:
-        centroids = []
-        for circle in circles[0]:
-            cx = float(circle[0]) + x0 + x_offset
-            cy = float(circle[1]) + y0 + y_offset
-            r = float(circle[2])
-            # Confidence based on how close detected radius matches profile
-            r_diff = abs(r - profile.mean_radius_px) / (profile.mean_radius_px + 1e-6)
-            conf = min(0.9, 0.6 + 0.3 * max(0, 1 - r_diff))
-            centroids.append((cx, cy, conf))
+    r = profile.mean_radius_px
+    r_tol = max(4, int(r * 0.35))
+    min_r = max(3, int(r - r_tol))
+    max_r = int(r + r_tol)
 
-        if len(centroids) >= estimated_n * 0.6:
-            return centroids
+    best_circles: list[tuple[float, float, float]] = []
 
-    # Fallback to filled decomposition
+    hough_configs = [
+        (1.2, int(r * 1.0), 50, 20),
+        (1.2, int(r * 1.0), 80, 25),
+        (1.0, int(r * 0.8), 50, 15),
+        (1.5, int(r * 1.2), 60, 20),
+        (1.2, int(r * 0.8), 40, 12),
+    ]
+
+    for dp, min_dist, p1, p2 in hough_configs:
+        min_dist = max(min_dist, int(r * 0.6))
+        blur_k = max(3, int(r * 0.4) | 1)
+        blurred = cv2.GaussianBlur(sub_roi, (blur_k, blur_k), 0.8)
+
+        circles = cv2.HoughCircles(
+            blurred, cv2.HOUGH_GRADIENT,
+            dp=dp, minDist=min_dist,
+            param1=p1, param2=p2,
+            minRadius=min_r, maxRadius=max_r,
+        )
+
+        if circles is not None and len(circles[0]) >= 2:
+            centroids = []
+            for circle in circles[0]:
+                cx = float(circle[0]) + x0 + x_offset
+                cy = float(circle[1]) + y0 + y_offset
+                cr = float(circle[2])
+                r_diff = abs(cr - r) / (r + 1e-6)
+                conf = min(0.9, 0.6 + 0.3 * max(0, 1 - r_diff))
+                centroids.append((cx, cy, conf))
+
+            if len(centroids) > len(best_circles):
+                best_circles = centroids
+
+            if len(best_circles) >= estimated_n:
+                break
+
+    if len(best_circles) >= max(2, int(estimated_n * 0.6)):
+        return best_circles
+
+    # Fallback to ellipse-based placement then filled decomposition
     return decompose_filled_clump(thresh, contour, profile, x_offset, y_offset, expected_n)
 
 

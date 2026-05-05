@@ -25,7 +25,7 @@ def _make_calibration_from_gt(gt: dict, image: np.ndarray) -> AxisCalibration:
     h, w = image.shape[:2]
     return AxisCalibration(
         x_pixel_range=(w * 0.125, w * 0.9),
-        y_pixel_range=(h * 0.88, h * 0.11),
+        y_pixel_range=(h * 0.89, h * 0.12),
         x_data_range=tuple(gt["x_range"]),
         y_data_range=tuple(gt["y_range"]),
     )
