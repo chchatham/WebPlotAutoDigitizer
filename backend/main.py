@@ -132,6 +132,7 @@ async def digitize_endpoint(request: DigitizeRequest):
         raise HTTPException(status_code=500, detail=f"Digitization error: {str(e)}")
 
     def sanitize(v: float) -> float:
+        v = float(v)
         if math.isnan(v) or math.isinf(v):
             return 0.0
         return v
